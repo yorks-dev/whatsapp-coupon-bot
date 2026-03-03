@@ -473,6 +473,25 @@ client.on("qr", (qr) => {
   emitControlEvent("qr", { qr });
 });
 
+client.on("authenticated", () => {
+  if (qrHintTimer) {
+    clearTimeout(qrHintTimer);
+    qrHintTimer = null;
+  }
+  console.log("WhatsApp session authenticated.");
+  runtimeState.connected = true;
+  emitControlEvent("authenticated");
+});
+
+client.on("change_state", (state) => {
+  const normalized = String(state || "").toUpperCase();
+  debugLog("Client state changed:", normalized);
+  emitControlEvent("wa_state", { state: normalized });
+  if (normalized === "CONNECTED") {
+    runtimeState.connected = true;
+  }
+});
+
 client.on("ready", async () => {
   if (qrHintTimer) {
     clearTimeout(qrHintTimer);

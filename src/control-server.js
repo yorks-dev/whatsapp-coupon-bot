@@ -115,12 +115,32 @@ function handleControlEvent(event) {
   const type = String(event.type || "").toLowerCase();
 
   if (type === "qr") {
+    if (state.botConnected && !state.needQr) {
+      appendLog(
+        "control",
+        "Ignoring QR event because bot is already marked connected."
+      );
+      appendLog("control:event", JSON.stringify(event));
+      return;
+    }
+
+    const qrValue = String(event.qr || "").trim();
+    const isMalformedQr = !qrValue || qrValue.startsWith("undefined,");
     state.botConnected = false;
     state.needQr = true;
-    state.qr = {
-      value: String(event.qr || ""),
-      updatedAt: String(event.ts || new Date().toISOString())
-    };
+    if (isMalformedQr) {
+      if (!state.qr) {
+        state.qr = {
+          value: "",
+          updatedAt: String(event.ts || new Date().toISOString())
+        };
+      }
+    } else {
+      state.qr = {
+        value: qrValue,
+        updatedAt: String(event.ts || new Date().toISOString())
+      };
+    }
   } else if (type === "monitoring_state") {
     state.monitoringEnabled = parseBoolean(event.enabled, false);
     if (event.config && typeof event.config === "object") {
@@ -152,6 +172,16 @@ function handleControlEvent(event) {
     state.botConnected = true;
     state.needQr = false;
     state.qr = null;
+  } else if (type === "authenticated") {
+    state.botConnected = true;
+    state.needQr = false;
+  } else if (type === "wa_state") {
+    const waState = String(event.state || "").toUpperCase();
+    if (waState === "CONNECTED") {
+      state.botConnected = true;
+      state.needQr = false;
+      state.qr = null;
+    }
   } else if (type === "disconnected") {
     state.botConnected = false;
     const reason = String(event.reason || "").toUpperCase();
@@ -174,8 +204,9 @@ function processOutputChunk(source, chunk, streamBuffers, key) {
   for (const line of parts) {
     if (!line) continue;
 
-    if (line.startsWith(CONTROL_EVENT_PREFIX)) {
-      const payload = line.slice(CONTROL_EVENT_PREFIX.length);
+    const markerIndex = line.indexOf(CONTROL_EVENT_PREFIX);
+    if (markerIndex >= 0) {
+      const payload = line.slice(markerIndex + CONTROL_EVENT_PREFIX.length);
       try {
         const event = JSON.parse(payload);
         handleControlEvent(event);
