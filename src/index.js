@@ -121,6 +121,7 @@ const keepaliveIntervalSeconds = Number(
   process.env.KEEPALIVE_INTERVAL_SECONDS || 300
 );
 const controlEventMode = parseBoolean(process.env.CONTROL_EVENT_MODE, false);
+const qrHintDelayMs = Number(process.env.QR_HINT_DELAY_MS || 7000);
 
 if (
   activeMealModeInput !== activeMealMode &&
@@ -233,11 +234,26 @@ let isInitializing = false;
 let reconnectTimer = null;
 let healthServer = null;
 let keepaliveTimer = null;
+let qrHintTimer = null;
 const processedMessageIds = new Set();
 
 async function initializeClient() {
   if (isInitializing) return;
   isInitializing = true;
+  runtimeState.connected = false;
+  console.log(`Initializing WhatsApp client (pid=${process.pid})...`);
+  emitControlEvent("initializing");
+
+  if (qrHintTimer) {
+    clearTimeout(qrHintTimer);
+    qrHintTimer = null;
+  }
+  qrHintTimer = setTimeout(() => {
+    if (runtimeState.connected) return;
+    console.log("Waiting for QR/session confirmation...");
+    emitControlEvent("awaiting_qr");
+  }, Math.max(1000, qrHintDelayMs));
+
   try {
     await client.initialize();
   } catch (error) {
@@ -246,6 +262,10 @@ async function initializeClient() {
       message: String(error?.message || error || "")
     });
   } finally {
+    if (qrHintTimer) {
+      clearTimeout(qrHintTimer);
+      qrHintTimer = null;
+    }
     isInitializing = false;
   }
 }
@@ -338,12 +358,20 @@ function startKeepaliveLoop() {
 }
 
 client.on("qr", (qr) => {
+  if (qrHintTimer) {
+    clearTimeout(qrHintTimer);
+    qrHintTimer = null;
+  }
   console.log("\nScan this QR code with WhatsApp:\n");
   qrcode.generate(qr, { small: true });
   emitControlEvent("qr", { qr });
 });
 
 client.on("ready", async () => {
+  if (qrHintTimer) {
+    clearTimeout(qrHintTimer);
+    qrHintTimer = null;
+  }
   console.log("Bot is ready and connected.");
   emitControlEvent("ready");
   runtimeState.connected = true;
@@ -397,6 +425,10 @@ client.on("auth_failure", (msg) => {
 });
 
 client.on("disconnected", (reason) => {
+  if (qrHintTimer) {
+    clearTimeout(qrHintTimer);
+    qrHintTimer = null;
+  }
   console.error("Client disconnected:", reason);
   emitControlEvent("disconnected", { reason: String(reason || "") });
   runtimeState.connected = false;

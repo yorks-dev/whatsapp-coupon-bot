@@ -87,6 +87,9 @@
           Scan this QR in WhatsApp mobile app to re-login:
           Linked devices -> Link a device.
         </p>
+        <p id="qrHint" class="mt-2 text-sm text-slate-600 hidden">
+          Generating QR... this can take a few seconds on cloud runtime.
+        </p>
         <div class="mt-4 flex items-center gap-6">
           <div id="qrBox" class="rounded-md border p-3"></div>
           <p class="text-xs text-slate-500">
@@ -119,6 +122,7 @@
       const logsEl = document.getElementById("logs");
       const qrSectionEl = document.getElementById("qrSection");
       const qrBoxEl = document.getElementById("qrBox");
+      const qrHintEl = document.getElementById("qrHint");
 
       const startBtn = document.getElementById("startBtn");
       const stopBtn = document.getElementById("stopBtn");
@@ -163,10 +167,11 @@
 
       function renderQr(status) {
         const qrValue = status?.qr?.value || "";
-        const shouldShow = Boolean(status?.needQr && qrValue);
+        const needsQr = Boolean(status?.needQr);
 
-        if (!shouldShow) {
+        if (!needsQr) {
           qrSectionEl.classList.add("hidden");
+          qrHintEl.classList.add("hidden");
           qrBoxEl.innerHTML = "";
           qrInstance = null;
           lastQrValue = "";
@@ -174,7 +179,15 @@
         }
 
         qrSectionEl.classList.remove("hidden");
+        if (!qrValue) {
+          qrHintEl.classList.remove("hidden");
+          qrBoxEl.innerHTML = "";
+          qrInstance = null;
+          lastQrValue = "";
+          return;
+        }
 
+        qrHintEl.classList.add("hidden");
         if (qrValue === lastQrValue) return;
         lastQrValue = qrValue;
 
@@ -244,7 +257,7 @@
       });
 
       refresh();
-      setInterval(refresh, 2000);
+      setInterval(refresh, 1000);
     </script>
   </body>
 </html>

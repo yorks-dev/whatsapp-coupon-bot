@@ -112,6 +112,15 @@ function handleControlEvent(event) {
       value: String(event.qr || ""),
       updatedAt: String(event.ts || new Date().toISOString())
     };
+  } else if (type === "awaiting_qr" || type === "initializing") {
+    state.botConnected = false;
+    state.needQr = true;
+    if (!state.qr) {
+      state.qr = {
+        value: "",
+        updatedAt: String(event.ts || new Date().toISOString())
+      };
+    }
   } else if (type === "ready") {
     state.botConnected = true;
     state.needQr = false;
