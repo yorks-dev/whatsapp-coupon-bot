@@ -120,6 +120,9 @@ git push -u origin main
 In Render service environment variables, set:
 - `TARGET_GROUP_IDS` (comma-separated `@g.us` IDs)
 - `REPLY_MESSAGE`
+- `REQUIRE_CONTROL_AUTH=true`
+- `CONTROL_AUTH_EMAIL=<your email>`
+- `CONTROL_AUTH_PASSWORD=<strong password>`
 - optional `TARGET_GROUP_NAMES`
 
 Defaults are already defined in `render.yaml` for:

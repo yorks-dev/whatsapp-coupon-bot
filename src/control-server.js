@@ -3,6 +3,7 @@
 const fs = require("fs");
 const path = require("path");
 const http = require("http");
+const crypto = require("crypto");
 const { spawn, execSync } = require("child_process");
 
 const { parseBoolean } = require("./runtime-options");
@@ -13,6 +14,14 @@ const CONTROL_HOST =
 const CONTROL_PORT = Number(process.env.PORT || process.env.CONTROL_PORT || 8788);
 const LOG_LIMIT = Number(process.env.CONTROL_LOG_LIMIT || 1000);
 const CONTROL_EVENT_PREFIX = "__CONTROL_EVENT__";
+const REQUIRE_CONTROL_AUTH = parseBoolean(
+  process.env.REQUIRE_CONTROL_AUTH,
+  false
+);
+const CONTROL_AUTH_EMAIL = String(process.env.CONTROL_AUTH_EMAIL || "").trim();
+const CONTROL_AUTH_PASSWORD = String(
+  process.env.CONTROL_AUTH_PASSWORD || ""
+).trim();
 
 const state = {
   running: false,
@@ -28,6 +37,50 @@ const state = {
   qr: null,
   logs: []
 };
+
+function safeEqual(left, right) {
+  const a = Buffer.from(String(left || ""));
+  const b = Buffer.from(String(right || ""));
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+}
+
+function parseBasicAuthHeader(value) {
+  const header = String(value || "");
+  if (!header.startsWith("Basic ")) return null;
+
+  try {
+    const decoded = Buffer.from(header.slice(6), "base64").toString("utf8");
+    const idx = decoded.indexOf(":");
+    if (idx < 0) return null;
+    return {
+      email: decoded.slice(0, idx),
+      password: decoded.slice(idx + 1)
+    };
+  } catch (_) {
+    return null;
+  }
+}
+
+function isAuthorized(req) {
+  if (!REQUIRE_CONTROL_AUTH) return true;
+  const parsed = parseBasicAuthHeader(req.headers.authorization);
+  if (!parsed) return false;
+  return (
+    safeEqual(parsed.email, CONTROL_AUTH_EMAIL) &&
+    safeEqual(parsed.password, CONTROL_AUTH_PASSWORD)
+  );
+}
+
+function sendAuthRequired(res) {
+  res.writeHead(401, {
+    "content-type": "application/json",
+    "www-authenticate": 'Basic realm="Coupon Bot Control", charset="UTF-8"'
+  });
+  res.end(
+    JSON.stringify({ ok: false, error: "auth_required", message: "Unauthorized" })
+  );
+}
 
 function appendLog(source, text) {
   const lines = String(text || "")
@@ -370,6 +423,12 @@ const server = http.createServer(async (req, res) => {
   try {
     const reqUrl = new URL(req.url, `http://${req.headers.host}`);
     const pathname = reqUrl.pathname;
+    const isHealthEndpoint = req.method === "GET" && pathname === "/api/health";
+
+    if (!isHealthEndpoint && !isAuthorized(req)) {
+      sendAuthRequired(res);
+      return;
+    }
 
     if (req.method === "GET" && pathname === "/") {
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
@@ -429,7 +488,12 @@ process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
 
 server.listen(CONTROL_PORT, CONTROL_HOST, () => {
+  if (REQUIRE_CONTROL_AUTH && (!CONTROL_AUTH_EMAIL || !CONTROL_AUTH_PASSWORD)) {
+    console.error(
+      "Control auth is enabled but CONTROL_AUTH_EMAIL or CONTROL_AUTH_PASSWORD is missing."
+    );
+  }
   console.log(
-    `Control server running at http://${CONTROL_HOST}:${CONTROL_PORT} (GUI)`
+    `Control server running at http://${CONTROL_HOST}:${CONTROL_PORT} (GUI), auth=${REQUIRE_CONTROL_AUTH ? "on" : "off"}`
   );
 });

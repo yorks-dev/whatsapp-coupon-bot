@@ -17,6 +17,12 @@ services:
         value: production
       - key: CONTROL_HOST
         value: 0.0.0.0
+      - key: REQUIRE_CONTROL_AUTH
+        value: "true"
+      - key: CONTROL_AUTH_EMAIL
+        sync: false
+      - key: CONTROL_AUTH_PASSWORD
+        sync: false
       - key: AUTH_PATH
         value: /var/data/.wwebjs_auth
       - key: CLIENT_ID

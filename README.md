@@ -92,6 +92,13 @@ Examples:
 - `GET /api/health` health
 
 If WhatsApp session expires/logs out, GUI automatically shows a scannable QR so you can re-login directly from the browser.
+You can protect GUI/API with basic auth using:
+- `REQUIRE_CONTROL_AUTH=true`
+- `CONTROL_AUTH_EMAIL=<your email>`
+- `CONTROL_AUTH_PASSWORD=<strong password>`
+
+Note:
+- `/api/health` remains open by design for external uptime monitors.
 
 UI file:
 - `src/control-ui.html`
