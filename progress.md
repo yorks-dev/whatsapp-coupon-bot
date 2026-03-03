@@ -26,6 +26,7 @@ Build a production-capable WhatsApp bot that:
 - [x] Cloud deployment pack added (PM2 + Docker + deployment guide).
 - [x] Render deployment blueprint added (`render.yaml`) with persistent auth disk path.
 - [x] Control GUI/API auth gate added (email/password via HTTP basic auth).
+- [x] Always-connected runtime mode: start/stop now toggles monitoring without restarting WhatsApp client.
 
 ## Implementation Plan
 

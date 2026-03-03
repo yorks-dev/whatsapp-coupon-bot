@@ -22,6 +22,14 @@ const CONTROL_AUTH_EMAIL = String(process.env.CONTROL_AUTH_EMAIL || "").trim();
 const CONTROL_AUTH_PASSWORD = String(
   process.env.CONTROL_AUTH_PASSWORD || ""
 ).trim();
+const ALWAYS_CONNECTED_MODE = parseBoolean(
+  process.env.ALWAYS_CONNECTED_MODE,
+  true
+);
+const MONITORING_ENABLED_ON_BOOT = parseBoolean(
+  process.env.MONITORING_ENABLED_ON_BOOT,
+  false
+);
 
 const state = {
   running: false,
@@ -33,6 +41,7 @@ const state = {
   config: null,
   botProcess: null,
   botConnected: false,
+  monitoringEnabled: false,
   needQr: false,
   qr: null,
   logs: []
@@ -112,6 +121,24 @@ function handleControlEvent(event) {
       value: String(event.qr || ""),
       updatedAt: String(event.ts || new Date().toISOString())
     };
+  } else if (type === "monitoring_state") {
+    state.monitoringEnabled = parseBoolean(event.enabled, false);
+    if (event.config && typeof event.config === "object") {
+      state.config = {
+        ...(state.config || {}),
+        ...event.config
+      };
+    }
+  } else if (type === "runtime_updated") {
+    if (event.config && typeof event.config === "object") {
+      state.config = {
+        ...(state.config || {}),
+        ...event.config
+      };
+    }
+    if (Object.prototype.hasOwnProperty.call(event, "monitoringEnabled")) {
+      state.monitoringEnabled = parseBoolean(event.monitoringEnabled, false);
+    }
   } else if (type === "awaiting_qr" || type === "initializing") {
     state.botConnected = false;
     state.needQr = true;
@@ -280,9 +307,47 @@ function normalizeMeal(rawMeal) {
   return "all";
 }
 
+function normalizeRuntimeConfig(input = {}, fallback = {}) {
+  return {
+    meal: normalizeMeal(input.meal),
+    mess: normalizeMess(input.mess),
+    allowFromMe: parseBoolean(input.allowFromMe, fallback.allowFromMe ?? true),
+    debugLogs: parseBoolean(input.debugLogs, fallback.debugLogs ?? true)
+  };
+}
+
+function sendBotCommand(command) {
+  if (!state.botProcess) return false;
+  if (!state.botProcess.stdin || state.botProcess.stdin.destroyed) return false;
+
+  try {
+    state.botProcess.stdin.write(`${JSON.stringify(command)}\n`);
+    return true;
+  } catch (error) {
+    appendLog("control", `Failed to send bot command: ${error?.message || error}`);
+    return false;
+  }
+}
+
+state.config = normalizeRuntimeConfig(
+  {
+    meal: process.env.ACTIVE_MEAL_MODE,
+    mess: process.env.ALLOWED_MESS_NAMES,
+    allowFromMe: process.env.ALLOW_FROM_ME,
+    debugLogs: process.env.DEBUG_LOGS
+  },
+  {
+    allowFromMe: false,
+    debugLogs: false
+  }
+);
+state.monitoringEnabled = MONITORING_ENABLED_ON_BOOT;
+
 function getStatusPayload() {
   return {
+    alwaysConnectedMode: ALWAYS_CONNECTED_MODE,
     running: state.running,
+    monitoringEnabled: state.monitoringEnabled,
     botConnected: state.botConnected,
     needQr: state.needQr,
     qr: state.qr,
@@ -295,7 +360,7 @@ function getStatusPayload() {
   };
 }
 
-async function stopBot() {
+async function terminateBotProcess() {
   if (!state.botProcess) return { stopped: true, reason: "not_running" };
 
   const proc = state.botProcess;
@@ -331,20 +396,24 @@ async function stopBot() {
   });
 
   state.botConnected = false;
+  state.monitoringEnabled = false;
   state.needQr = false;
   state.qr = null;
 
   return { stopped: true, reason: "stopped" };
 }
 
-async function startBot(configInput = {}) {
-  const meal = normalizeMeal(configInput.meal);
-  const mess = normalizeMess(configInput.mess);
-  const allowFromMe = parseBoolean(configInput.allowFromMe, true);
-  const debugLogs = parseBoolean(configInput.debugLogs, true);
+async function ensureBotStarted(configInput = {}) {
+  const normalizedConfig = normalizeRuntimeConfig(configInput, state.config || {});
+  state.config = {
+    ...(state.config || {}),
+    ...normalizedConfig
+  };
 
-  if (state.botProcess) {
-    await stopBot();
+  if (state.botProcess && isPidAlive(state.botProcess.pid)) {
+    sendBotCommand({ type: "set_runtime", config: state.config });
+    sendBotCommand({ type: "set_monitoring", enabled: state.monitoringEnabled });
+    return getStatusPayload();
   }
 
   await cleanupStaleProcesses();
@@ -353,13 +422,13 @@ async function startBot(configInput = {}) {
   const args = [
     botPath,
     "--meal",
-    meal,
+    state.config.meal,
     "--mess",
-    mess,
+    state.config.mess,
     "--allow-from-me",
-    String(allowFromMe),
+    String(state.config.allowFromMe),
     "--debug",
-    String(debugLogs)
+    String(state.config.debugLogs)
   ];
 
   const child = spawn(process.execPath, args, {
@@ -368,9 +437,10 @@ async function startBot(configInput = {}) {
       ...process.env,
       CONTROL_EVENT_MODE: "true",
       // When control server is active, its /api/health is the external healthcheck.
-      HEALTH_PORT: process.env.BOT_HEALTH_PORT || "0"
+      HEALTH_PORT: process.env.BOT_HEALTH_PORT || "0",
+      MONITORING_ENABLED_ON_BOOT: String(state.monitoringEnabled)
     },
-    stdio: ["ignore", "pipe", "pipe"]
+    stdio: ["pipe", "pipe", "pipe"]
   });
 
   state.botProcess = child;
@@ -383,16 +453,10 @@ async function startBot(configInput = {}) {
   state.botConnected = false;
   state.needQr = false;
   state.qr = null;
-  state.config = {
-    meal,
-    mess,
-    allowFromMe,
-    debugLogs
-  };
 
   appendLog(
     "control",
-    `Started bot pid=${child.pid} meal=${meal} mess=${mess}`
+    `Started bot pid=${child.pid} meal=${state.config.meal} mess=${state.config.mess}`
   );
 
   const streamBuffers = {
@@ -408,6 +472,7 @@ async function startBot(configInput = {}) {
   );
   child.on("exit", (code, signal) => {
     state.running = false;
+    state.monitoringEnabled = false;
     state.botConnected = false;
     state.pid = null;
     state.stoppedAt = new Date().toISOString();
@@ -420,7 +485,41 @@ async function startBot(configInput = {}) {
     );
   });
 
+  // Push runtime + monitoring state once stdin is open.
+  setTimeout(() => {
+    sendBotCommand({ type: "set_runtime", config: state.config });
+    sendBotCommand({ type: "set_monitoring", enabled: state.monitoringEnabled });
+  }, 100);
+
   return getStatusPayload();
+}
+
+async function startBot(configInput = {}) {
+  const normalizedConfig = normalizeRuntimeConfig(configInput, state.config || {});
+  state.config = {
+    ...(state.config || {}),
+    ...normalizedConfig
+  };
+  state.monitoringEnabled = true;
+
+  await ensureBotStarted(state.config);
+  sendBotCommand({ type: "set_runtime", config: state.config });
+  sendBotCommand({ type: "set_monitoring", enabled: true });
+
+  appendLog(
+    "control",
+    `Monitoring enabled meal=${state.config.meal} mess=${state.config.mess}`
+  );
+  return getStatusPayload();
+}
+
+async function stopBot() {
+  if (!state.botProcess) return { stopped: true, reason: "not_running" };
+
+  state.monitoringEnabled = false;
+  sendBotCommand({ type: "set_monitoring", enabled: false });
+  appendLog("control", "Monitoring disabled (bot kept connected).");
+  return { stopped: true, reason: "monitoring_disabled" };
 }
 
 function getUiHtml() {
@@ -488,7 +587,7 @@ const server = http.createServer(async (req, res) => {
 
 async function shutdown() {
   try {
-    await stopBot();
+    await terminateBotProcess();
   } catch (_) {}
   process.exit(0);
 }
@@ -505,4 +604,17 @@ server.listen(CONTROL_PORT, CONTROL_HOST, () => {
   console.log(
     `Control server running at http://${CONTROL_HOST}:${CONTROL_PORT} (GUI), auth=${REQUIRE_CONTROL_AUTH ? "on" : "off"}`
   );
+
+  if (ALWAYS_CONNECTED_MODE) {
+    appendLog(
+      "control",
+      `Always-connected mode enabled (monitoring=${state.monitoringEnabled})`
+    );
+    ensureBotStarted(state.config).catch((error) => {
+      appendLog(
+        "control",
+        `Failed to start persistent bot runtime: ${error?.message || error}`
+      );
+    });
+  }
 });

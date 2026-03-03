@@ -12,7 +12,7 @@
       <header class="mb-6">
         <h1 class="text-2xl font-semibold tracking-tight">Coupon Bot Control</h1>
         <p class="mt-1 text-sm text-slate-600">
-          Start/stop monitoring and switch mess + meal without editing env files.
+          Bot stays connected. Start/stop only toggles monitoring + auto-replies.
         </p>
       </header>
 
@@ -157,6 +157,7 @@
         const cfg = status.config || {};
         return [
           `Running (pid ${status.pid})`,
+          `monitoring=${String(Boolean(status.monitoringEnabled))}`,
           `connected=${String(Boolean(status.botConnected))}`,
           `needQr=${String(Boolean(status.needQr))}`,
           `meal=${cfg.meal ?? "n/a"}`,

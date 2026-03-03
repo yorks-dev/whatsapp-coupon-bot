@@ -120,6 +120,8 @@ git push -u origin main
 In Render service environment variables, set:
 - `TARGET_GROUP_IDS` (comma-separated `@g.us` IDs)
 - `REPLY_MESSAGE`
+- `ALWAYS_CONNECTED_MODE=true`
+- `MONITORING_ENABLED_ON_BOOT=false`
 - `REQUIRE_CONTROL_AUTH=true`
 - `CONTROL_AUTH_EMAIL=<your email>`
 - `CONTROL_AUTH_PASSWORD=<strong password>`

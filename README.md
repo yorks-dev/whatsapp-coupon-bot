@@ -85,13 +85,20 @@ Examples:
 
 `src/control-server.js` provides:
 - `GET /` GUI
-- `POST /api/start` start monitoring with selected mess/meal
-- `POST /api/stop` stop monitoring
+- `POST /api/start` enable monitoring with selected mess/meal
+- `POST /api/stop` disable monitoring (bot stays connected)
 - `GET /api/status` process status
 - `GET /api/logs` recent logs
 - `GET /api/health` health
 
 If WhatsApp session expires/logs out, GUI automatically shows a scannable QR so you can re-login directly from the browser.
+Controller defaults to always-connected mode:
+- bot process is started once and kept alive
+- start/stop does not restart browser/client
+
+Control runtime env keys:
+- `ALWAYS_CONNECTED_MODE=true`
+- `MONITORING_ENABLED_ON_BOOT=false`
 You can protect GUI/API with basic auth using:
 - `REQUIRE_CONTROL_AUTH=true`
 - `CONTROL_AUTH_EMAIL=<your email>`

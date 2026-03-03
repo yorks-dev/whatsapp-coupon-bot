@@ -17,6 +17,10 @@ services:
         value: production
       - key: CONTROL_HOST
         value: 0.0.0.0
+      - key: ALWAYS_CONNECTED_MODE
+        value: "true"
+      - key: MONITORING_ENABLED_ON_BOOT
+        value: "false"
       - key: REQUIRE_CONTROL_AUTH
         value: "true"
       - key: CONTROL_AUTH_EMAIL

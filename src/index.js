@@ -8,6 +8,8 @@ const {
   parseCsv,
   parseBoolean,
   parseJsonObject,
+  resolveMealMode,
+  resolveMessNames,
   resolveRuntimeOptions
 } = require("./runtime-options");
 
@@ -93,10 +95,10 @@ const runtimeOptions = resolveRuntimeOptions({
   argv: process.argv.slice(2),
   now: new Date()
 });
-const allowedMessNames = runtimeOptions.allowedMessNames;
+let allowedMessNames = runtimeOptions.allowedMessNames;
 const messAliases = parseJsonObject(process.env.MESS_ALIASES_JSON, {});
 const activeMealModeInput = runtimeOptions.activeMealModeInput;
-const activeMealMode = runtimeOptions.activeMealMode;
+let activeMealMode = runtimeOptions.activeMealMode;
 const targetGroupIds = parseCsv(process.env.TARGET_GROUP_IDS);
 const targetGroupNames = parseCsv(process.env.TARGET_GROUP_NAMES);
 const targetGroupNameSet = toLowerSet(targetGroupNames);
@@ -105,8 +107,8 @@ const replyTemplate =
   "I want to buy {{MESS_NAME}} {{MESS_TIME}} coupon. send to same number?";
 const replyCooldownSeconds = Number(process.env.REPLY_COOLDOWN_SECONDS || 0);
 const showGroupsOnReady = parseBoolean(process.env.LOG_GROUPS_ON_READY, false);
-const allowFromMe = runtimeOptions.allowFromMe;
-const debugLogs = runtimeOptions.debugLogs;
+let allowFromMe = runtimeOptions.allowFromMe;
+let debugLogs = runtimeOptions.debugLogs;
 const logAllGroupMessages = parseBoolean(process.env.LOG_ALL_GROUP_MESSAGES, false);
 const autoRestartOnDisconnect = parseBoolean(
   process.env.AUTO_RESTART_ON_DISCONNECT,
@@ -122,6 +124,11 @@ const keepaliveIntervalSeconds = Number(
 );
 const controlEventMode = parseBoolean(process.env.CONTROL_EVENT_MODE, false);
 const qrHintDelayMs = Number(process.env.QR_HINT_DELAY_MS || 7000);
+const monitoringEnabledOnBoot = parseBoolean(
+  process.env.MONITORING_ENABLED_ON_BOOT,
+  false
+);
+let monitoringEnabled = controlEventMode ? monitoringEnabledOnBoot : true;
 
 if (
   activeMealModeInput !== activeMealMode &&
@@ -159,6 +166,105 @@ function emitControlEvent(type, payload = {}) {
 
 function oneLine(text) {
   return String(text || "").replace(/\s+/g, " ").trim();
+}
+
+function runtimeConfigSnapshot() {
+  return {
+    meal: activeMealMode,
+    mess: allowedMessNames.join(","),
+    allowFromMe,
+    debugLogs
+  };
+}
+
+function setMonitoringEnabled(enabled, reason = "manual") {
+  monitoringEnabled = Boolean(enabled);
+  const stateText = monitoringEnabled ? "enabled" : "disabled";
+  console.log(`Monitoring ${stateText} (${reason}).`);
+  emitControlEvent("monitoring_state", {
+    enabled: monitoringEnabled,
+    reason,
+    config: runtimeConfigSnapshot()
+  });
+}
+
+function applyRuntimeOverrides(config = {}) {
+  if (!config || typeof config !== "object") return;
+
+  if (Object.prototype.hasOwnProperty.call(config, "mess")) {
+    allowedMessNames = resolveMessNames(
+      config.mess,
+      process.env.ALLOWED_MESS_NAMES || "neelkesh,firstman"
+    );
+  }
+
+  if (Object.prototype.hasOwnProperty.call(config, "meal")) {
+    activeMealMode = resolveMealMode(config.meal, new Date());
+  }
+
+  if (Object.prototype.hasOwnProperty.call(config, "allowFromMe")) {
+    allowFromMe = parseBoolean(config.allowFromMe, allowFromMe);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(config, "debugLogs")) {
+    debugLogs = parseBoolean(config.debugLogs, debugLogs);
+  }
+
+  console.log("Runtime config updated:", runtimeConfigSnapshot());
+  emitControlEvent("runtime_updated", {
+    config: runtimeConfigSnapshot(),
+    monitoringEnabled
+  });
+}
+
+function setupControlCommandChannel() {
+  if (!controlEventMode) return;
+  if (!process.stdin) return;
+  if (process.stdin.destroyed) return;
+
+  let inputBuffer = "";
+  process.stdin.setEncoding("utf8");
+  process.stdin.on("data", (chunk) => {
+    inputBuffer += String(chunk || "");
+    const parts = inputBuffer.split(/\r?\n/);
+    inputBuffer = parts.pop() || "";
+
+    for (const line of parts) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+
+      let command = null;
+      try {
+        command = JSON.parse(trimmed);
+      } catch (_) {
+        console.error("Control command parse failed:", trimmed);
+        continue;
+      }
+
+      const type = String(command?.type || "").toLowerCase();
+      if (type === "set_runtime") {
+        applyRuntimeOverrides(command.config || {});
+      } else if (type === "set_monitoring") {
+        setMonitoringEnabled(
+          parseBoolean(command.enabled, false),
+          "control_command"
+        );
+      } else if (type === "ping") {
+        emitControlEvent("pong");
+      } else {
+        console.warn("Unknown control command type:", command?.type);
+      }
+    }
+  });
+
+  process.stdin.on("error", (error) => {
+    console.error("Control command channel error:", error?.message || error);
+  });
+
+  emitControlEvent("control_channel_ready", {
+    monitoringEnabled,
+    config: runtimeConfigSnapshot()
+  });
 }
 
 function sleep(ms) {
@@ -464,6 +570,11 @@ async function handleIncomingMessage(message, source) {
   try {
     runtimeState.lastMessageAt = new Date().toISOString();
 
+    if (!monitoringEnabled) {
+      debugLog("Skip: monitoring disabled");
+      return;
+    }
+
     const messageId = message.id?._serialized || null;
     if (messageId && processedMessageIds.has(messageId)) {
       debugLog("Skip: duplicate message event", { source, messageId });
@@ -625,4 +736,8 @@ process.on("unhandledRejection", (reason) => {
 
 startHealthServer();
 startKeepaliveLoop();
+setupControlCommandChannel();
+if (controlEventMode) {
+  setMonitoringEnabled(monitoringEnabled, "boot");
+}
 initializeClient();
