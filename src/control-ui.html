@@ -141,11 +141,36 @@
           headers: { "content-type": "application/json" },
           body: body ? JSON.stringify(body) : undefined
         });
-        const json = await response.json();
-        if (!response.ok) {
-          throw new Error(json.error || `Request failed (${response.status})`);
+        const raw = await response.text();
+        let payload = null;
+
+        try {
+          payload = raw ? JSON.parse(raw) : null;
+        } catch (_) {
+          payload = null;
         }
-        return json;
+
+        if (!response.ok) {
+          const base =
+            payload?.error ||
+            payload?.message ||
+            `Request failed (${response.status})`;
+          if (response.status === 401) {
+            throw new Error("Unauthorized. Refresh and login again.");
+          }
+          if (raw && raw.trim().startsWith("<!DOCTYPE")) {
+            throw new Error(`${base}. Upstream returned HTML (service restart/proxy page).`);
+          }
+          throw new Error(base);
+        }
+
+        if (!payload || typeof payload !== "object") {
+          throw new Error(
+            `Invalid API response (${response.status}). Expected JSON object.`
+          );
+        }
+
+        return payload;
       }
 
       function formatStatus(status) {
