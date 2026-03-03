@@ -1,0 +1,26 @@
+{
+  "name": "whatsapp-coupon-bot",
+  "version": "1.0.0",
+  "description": "WhatsApp bot that listens to selected groups and privately replies to matching senders.",
+  "main": "src/index.js",
+  "bin": {
+    "coupon-bot": "bin/coupon-bot.js"
+  },
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/index.js",
+    "gui": "node src/control-server.js",
+    "test:parser": "node --test test/parser.test.js",
+    "test:runtime": "node --test test/runtime-options.test.js",
+    "test:flow": "node --test test/monitoring-flow.test.js",
+    "test": "npm run test:parser && npm run test:runtime && npm run test:flow"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "dotenv": "^16.6.1",
+    "qrcode-terminal": "^0.12.0",
+    "whatsapp-web.js": "^1.34.1"
+  }
+}

@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Coupon Bot Control</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  </head>
+  <body class="min-h-screen bg-slate-50 text-slate-900">
+    <main class="mx-auto max-w-5xl p-6 md:p-10">
+      <header class="mb-6">
+        <h1 class="text-2xl font-semibold tracking-tight">Coupon Bot Control</h1>
+        <p class="mt-1 text-sm text-slate-600">
+          Start/stop monitoring and switch mess + meal without editing env files.
+        </p>
+      </header>
+
+      <section class="grid gap-4 md:grid-cols-3">
+        <div class="rounded-xl border bg-white p-4 shadow-sm">
+          <label for="mess" class="mb-2 block text-sm font-medium">Mess</label>
+          <select
+            id="mess"
+            class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
+          >
+            <option value="neelkesh">Neelkesh</option>
+            <option value="firstman">Firstman</option>
+            <option value="all">All</option>
+          </select>
+        </div>
+
+        <div class="rounded-xl border bg-white p-4 shadow-sm">
+          <label for="meal" class="mb-2 block text-sm font-medium">Meal</label>
+          <select
+            id="meal"
+            class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
+          >
+            <option value="lunch">Lunch</option>
+            <option value="dinner">Dinner</option>
+            <option value="all">All</option>
+          </select>
+        </div>
+
+        <div class="rounded-xl border bg-white p-4 shadow-sm">
+          <label class="mb-2 block text-sm font-medium">Options</label>
+          <label class="mt-2 flex items-center gap-2 text-sm">
+            <input id="allowFromMe" type="checkbox" class="h-4 w-4" checked />
+            Allow From Me (Self-Test)
+          </label>
+          <label class="mt-2 flex items-center gap-2 text-sm">
+            <input id="debugLogs" type="checkbox" class="h-4 w-4" checked />
+            Debug Logs
+          </label>
+        </div>
+      </section>
+
+      <section class="mt-4 flex flex-wrap gap-3">
+        <button
+          id="startBtn"
+          class="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700"
+        >
+          Start Monitoring
+        </button>
+        <button
+          id="stopBtn"
+          class="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100"
+        >
+          Stop Monitoring
+        </button>
+      </section>
+
+      <section class="mt-6 rounded-xl border bg-white p-4 shadow-sm">
+        <h2 class="text-sm font-semibold uppercase tracking-wide text-slate-500">
+          Status
+        </h2>
+        <div id="status" class="mt-2 text-sm text-slate-700">Loading...</div>
+      </section>
+
+      <section
+        id="qrSection"
+        class="mt-4 hidden rounded-xl border bg-white p-4 shadow-sm"
+      >
+        <h2 class="text-sm font-semibold uppercase tracking-wide text-slate-500">
+          WhatsApp QR Login Required
+        </h2>
+        <p class="mt-2 text-sm text-slate-600">
+          Scan this QR in WhatsApp mobile app to re-login:
+          Linked devices -> Link a device.
+        </p>
+        <div class="mt-4 flex items-center gap-6">
+          <div id="qrBox" class="rounded-md border p-3"></div>
+          <p class="text-xs text-slate-500">
+            QR updates automatically when token refreshes.
+          </p>
+        </div>
+      </section>
+
+      <section class="mt-4 rounded-xl border bg-white p-4 shadow-sm">
+        <div class="mb-2 flex items-center justify-between">
+          <h2 class="text-sm font-semibold uppercase tracking-wide text-slate-500">
+            Logs
+          </h2>
+          <button
+            id="clearBtn"
+            class="rounded-md border border-slate-300 bg-white px-3 py-1 text-xs text-slate-600 hover:bg-slate-100"
+          >
+            Clear View
+          </button>
+        </div>
+        <pre
+          id="logs"
+          class="h-[420px] overflow-auto rounded-md bg-slate-950 p-3 text-xs text-slate-100"
+        ></pre>
+      </section>
+    </main>
+
+    <script>
+      const statusEl = document.getElementById("status");
+      const logsEl = document.getElementById("logs");
+      const qrSectionEl = document.getElementById("qrSection");
+      const qrBoxEl = document.getElementById("qrBox");
+
+      const startBtn = document.getElementById("startBtn");
+      const stopBtn = document.getElementById("stopBtn");
+      const clearBtn = document.getElementById("clearBtn");
+
+      const messInput = document.getElementById("mess");
+      const mealInput = document.getElementById("meal");
+      const allowFromMeInput = document.getElementById("allowFromMe");
+      const debugInput = document.getElementById("debugLogs");
+      let lastQrValue = "";
+      let qrInstance = null;
+
+      async function api(path, method = "GET", body) {
+        const response = await fetch(path, {
+          method,
+          headers: { "content-type": "application/json" },
+          body: body ? JSON.stringify(body) : undefined
+        });
+        const json = await response.json();
+        if (!response.ok) {
+          throw new Error(json.error || `Request failed (${response.status})`);
+        }
+        return json;
+      }
+
+      function formatStatus(status) {
+        if (!status) return "Unknown";
+        if (!status.running) {
+          return `Stopped | lastExit=${status.exitCode ?? "n/a"} signal=${status.signal ?? "n/a"}`;
+        }
+
+        const cfg = status.config || {};
+        return [
+          `Running (pid ${status.pid})`,
+          `connected=${String(Boolean(status.botConnected))}`,
+          `needQr=${String(Boolean(status.needQr))}`,
+          `meal=${cfg.meal ?? "n/a"}`,
+          `mess=${cfg.mess ?? "n/a"}`,
+          `startedAt=${status.startedAt ?? "n/a"}`
+        ].join(" | ");
+      }
+
+      function renderQr(status) {
+        const qrValue = status?.qr?.value || "";
+        const shouldShow = Boolean(status?.needQr && qrValue);
+
+        if (!shouldShow) {
+          qrSectionEl.classList.add("hidden");
+          qrBoxEl.innerHTML = "";
+          qrInstance = null;
+          lastQrValue = "";
+          return;
+        }
+
+        qrSectionEl.classList.remove("hidden");
+
+        if (qrValue === lastQrValue) return;
+        lastQrValue = qrValue;
+
+        qrBoxEl.innerHTML = "";
+        qrInstance = new QRCode(qrBoxEl, {
+          text: qrValue,
+          width: 220,
+          height: 220,
+          correctLevel: QRCode.CorrectLevel.M
+        });
+      }
+
+      function renderLogs(items) {
+        const text = (items || [])
+          .map((item) => `[${item.ts}] [${item.source}] ${item.line}`)
+          .join("\n");
+        logsEl.textContent = text;
+        logsEl.scrollTop = logsEl.scrollHeight;
+      }
+
+      async function refresh() {
+        try {
+          const [statusResp, logsResp] = await Promise.all([
+            api("/api/status"),
+            api("/api/logs?limit=400")
+          ]);
+          statusEl.textContent = formatStatus(statusResp);
+          renderQr(statusResp);
+          renderLogs(logsResp.logs);
+        } catch (error) {
+          statusEl.textContent = `Error: ${error.message}`;
+          qrSectionEl.classList.add("hidden");
+        }
+      }
+
+      startBtn.addEventListener("click", async () => {
+        startBtn.disabled = true;
+        try {
+          await api("/api/start", "POST", {
+            meal: mealInput.value,
+            mess: messInput.value,
+            allowFromMe: allowFromMeInput.checked,
+            debugLogs: debugInput.checked
+          });
+          await refresh();
+        } catch (error) {
+          alert(error.message);
+        } finally {
+          startBtn.disabled = false;
+        }
+      });
+
+      stopBtn.addEventListener("click", async () => {
+        stopBtn.disabled = true;
+        try {
+          await api("/api/stop", "POST");
+          await refresh();
+        } catch (error) {
+          alert(error.message);
+        } finally {
+          stopBtn.disabled = false;
+        }
+      });
+
+      clearBtn.addEventListener("click", () => {
+        logsEl.textContent = "";
+      });
+
+      refresh();
+      setInterval(refresh, 2000);
+    </script>
+  </body>
+</html>

@@ -1,0 +1,51 @@
+services:
+  - type: web
+    name: whatsapp-coupon-bot
+    env: docker
+    plan: starter
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    dockerCommand: node src/control-server.js
+    healthCheckPath: /api/health
+    autoDeploy: true
+    disk:
+      name: whatsapp-coupon-auth
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: CONTROL_HOST
+        value: 0.0.0.0
+      - key: AUTH_PATH
+        value: /var/data/.wwebjs_auth
+      - key: CLIENT_ID
+        value: coupon-bot
+      - key: HEADLESS
+        value: "true"
+      - key: PUPPETEER_EXECUTABLE_PATH
+        value: /usr/bin/chromium
+      - key: ALLOW_FROM_ME
+        value: "false"
+      - key: DEBUG_LOGS
+        value: "true"
+      - key: LOG_ALL_GROUP_MESSAGES
+        value: "true"
+      - key: REPLY_COOLDOWN_SECONDS
+        value: "0"
+      - key: AUTO_RESTART_ON_DISCONNECT
+        value: "true"
+      - key: RESTART_DELAY_MS
+        value: "5000"
+      - key: TARGET_GROUP_IDS
+        sync: false
+      - key: TARGET_GROUP_NAMES
+        sync: false
+      - key: REPLY_MESSAGE
+        sync: false
+      - key: ALLOWED_MESS_NAMES
+        value: neelkesh,firstman
+      - key: ACTIVE_MEAL_MODE
+        value: all
+      - key: MESS_ALIASES_JSON
+        value: '{"neelkesh":["neelksh","neelakesh"],"firstman":["fristman","firstmaan"]}'
