@@ -33,6 +33,21 @@ const CONTROL_AUTH_EMAIL = String(process.env.CONTROL_AUTH_EMAIL || "").trim();
 const CONTROL_AUTH_PASSWORD = String(
   process.env.CONTROL_AUTH_PASSWORD || ""
 ).trim();
+const SESSION_COOKIE_NAME = String(
+  process.env.SESSION_COOKIE_NAME || "coupon_bot_session"
+).trim();
+const SESSION_SECRET = String(
+  process.env.CONTROL_SESSION_SECRET ||
+    `${CONTROL_AUTH_EMAIL}:${CONTROL_AUTH_PASSWORD}:coupon-bot`
+).trim();
+const SESSION_SECURE_COOKIE = parseBoolean(
+  process.env.SESSION_SECURE_COOKIE,
+  process.env.NODE_ENV === "production"
+);
+const SESSION_SAMESITE = String(
+  process.env.SESSION_SAMESITE || "Lax"
+).trim();
+const SESSION_MAX_ACTIVE = Number(process.env.SESSION_MAX_ACTIVE || 200);
 const ALWAYS_CONNECTED_MODE = parseBoolean(
   process.env.ALWAYS_CONNECTED_MODE,
   true
@@ -64,6 +79,9 @@ const rateLimitState = {
   health: new Map(),
   authFail: new Map()
 };
+const sessionState = {
+  sessions: new Map()
+};
 
 function safeEqual(left, right) {
   const a = Buffer.from(String(left || ""));
@@ -72,21 +90,129 @@ function safeEqual(left, right) {
   return crypto.timingSafeEqual(a, b);
 }
 
-function parseBasicAuthHeader(value) {
-  const header = String(value || "");
-  if (!header.startsWith("Basic ")) return null;
+function parseCookies(headerValue) {
+  const header = String(headerValue || "");
+  if (!header) return {};
+  return header.split(";").reduce((acc, segment) => {
+    const idx = segment.indexOf("=");
+    if (idx <= 0) return acc;
+    const key = segment.slice(0, idx).trim();
+    const value = segment.slice(idx + 1).trim();
+    if (!key) return acc;
+    acc[key] = decodeURIComponent(value);
+    return acc;
+  }, {});
+}
 
-  try {
-    const decoded = Buffer.from(header.slice(6), "base64").toString("utf8");
-    const idx = decoded.indexOf(":");
-    if (idx < 0) return null;
-    return {
-      email: decoded.slice(0, idx),
-      password: decoded.slice(idx + 1)
-    };
-  } catch (_) {
-    return null;
+function toCookieDate(value) {
+  const date = value instanceof Date ? value : new Date(value);
+  return date.toUTCString();
+}
+
+function buildCookie(name, value, options = {}) {
+  const segments = [`${name}=${encodeURIComponent(String(value || ""))}`];
+  segments.push(`Path=${options.path || "/"}`);
+  if (options.httpOnly !== false) segments.push("HttpOnly");
+  if (options.secure) segments.push("Secure");
+  if (options.sameSite) segments.push(`SameSite=${options.sameSite}`);
+  if (options.expires) segments.push(`Expires=${toCookieDate(options.expires)}`);
+  if (options.maxAgeSeconds != null) segments.push(`Max-Age=${options.maxAgeSeconds}`);
+  return segments.join("; ");
+}
+
+function hashSessionToken(token) {
+  return crypto
+    .createHash("sha256")
+    .update(`${SESSION_SECRET}:${String(token || "")}`)
+    .digest("hex");
+}
+
+function nextLocalMidnightDate() {
+  const now = new Date();
+  now.setHours(24, 0, 0, 0);
+  return now;
+}
+
+function pruneSessions(nowMs = Date.now()) {
+  const sessions = sessionState.sessions;
+  for (const [key, record] of sessions) {
+    if (!record || record.expiresAtMs <= nowMs) {
+      sessions.delete(key);
+    }
   }
+  while (sessions.size > Math.max(1, SESSION_MAX_ACTIVE)) {
+    const oldestKey = sessions.keys().next().value;
+    sessions.delete(oldestKey);
+  }
+}
+
+function createSession(email) {
+  pruneSessions();
+  const token = crypto.randomBytes(32).toString("base64url");
+  const expiresAt = nextLocalMidnightDate();
+  const tokenHash = hashSessionToken(token);
+  sessionState.sessions.set(tokenHash, {
+    email: String(email || "").toLowerCase(),
+    createdAtMs: Date.now(),
+    expiresAtMs: expiresAt.getTime()
+  });
+  return { token, expiresAt };
+}
+
+function clearSessionToken(token) {
+  if (!token) return;
+  sessionState.sessions.delete(hashSessionToken(token));
+}
+
+function getSessionFromRequest(req) {
+  if (!REQUIRE_CONTROL_AUTH) return { ok: true, session: null };
+
+  pruneSessions();
+  const cookies = parseCookies(req.headers.cookie);
+  const token = cookies[SESSION_COOKIE_NAME];
+  if (!token) return { ok: false, session: null };
+
+  const tokenHash = hashSessionToken(token);
+  const record = sessionState.sessions.get(tokenHash);
+  if (!record) return { ok: false, session: null };
+
+  if (record.expiresAtMs <= Date.now()) {
+    sessionState.sessions.delete(tokenHash);
+    return { ok: false, session: null };
+  }
+  return { ok: true, session: record };
+}
+
+function isAuthorized(req) {
+  if (!REQUIRE_CONTROL_AUTH) return true;
+  return getSessionFromRequest(req).ok;
+}
+
+function setSessionCookie(res, token, expiresAt) {
+  res.setHeader(
+    "set-cookie",
+    buildCookie(SESSION_COOKIE_NAME, token, {
+      path: "/",
+      httpOnly: true,
+      secure: SESSION_SECURE_COOKIE,
+      sameSite: SESSION_SAMESITE,
+      expires: expiresAt
+    })
+  );
+}
+
+function clearSessionCookie(res) {
+  res.setHeader(
+    "set-cookie",
+    buildCookie(SESSION_COOKIE_NAME, "", {
+      path: "/",
+      httpOnly: true,
+      secure: SESSION_SECURE_COOKIE,
+      sameSite: SESSION_SAMESITE,
+      expires: new Date(0),
+      maxAgeSeconds: 0
+    })
+  );
 }
 
 function getClientIp(req) {
@@ -145,21 +271,8 @@ function consumeRateLimit(map, key, maxHits, windowMs) {
   };
 }
 
-function isAuthorized(req) {
-  if (!REQUIRE_CONTROL_AUTH) return true;
-  const parsed = parseBasicAuthHeader(req.headers.authorization);
-  if (!parsed) return false;
-  return (
-    safeEqual(parsed.email, CONTROL_AUTH_EMAIL) &&
-    safeEqual(parsed.password, CONTROL_AUTH_PASSWORD)
-  );
-}
-
 function sendAuthRequired(res) {
-  res.writeHead(401, {
-    "content-type": "application/json",
-    "www-authenticate": 'Basic realm="Coupon Bot Control", charset="UTF-8"'
-  });
+  res.writeHead(401, { "content-type": "application/json" });
   res.end(
     JSON.stringify({ ok: false, error: "auth_required", message: "Unauthorized" })
   );
@@ -411,9 +524,17 @@ function readBody(req) {
   });
 }
 
-function sendJson(res, statusCode, payload) {
-  res.writeHead(statusCode, { "content-type": "application/json" });
+function sendJson(res, statusCode, payload, extraHeaders = {}) {
+  res.writeHead(statusCode, {
+    "content-type": "application/json",
+    ...extraHeaders
+  });
   res.end(JSON.stringify(payload));
+}
+
+function sendRedirect(res, location, statusCode = 302) {
+  res.writeHead(statusCode, { location });
+  res.end();
 }
 
 function normalizeMess(rawMess) {
@@ -683,11 +804,23 @@ function getUiHtml() {
   return fs.readFileSync(uiPath, "utf8");
 }
 
+function getLoginUiHtml() {
+  const uiPath = path.join(__dirname, "login-ui.html");
+  return fs.readFileSync(uiPath, "utf8");
+}
+
 const server = http.createServer(async (req, res) => {
   try {
     const reqUrl = new URL(req.url, `http://${req.headers.host}`);
     const pathname = reqUrl.pathname;
+    const isApi = pathname.startsWith("/api/");
     const isHealthEndpoint = req.method === "GET" && pathname === "/api/health";
+    const isLoginPage = req.method === "GET" && pathname === "/login";
+    const isAuthStatusEndpoint =
+      req.method === "GET" && pathname === "/api/auth/status";
+    const isLoginEndpoint = req.method === "POST" && pathname === "/api/auth/login";
+    const isLogoutEndpoint =
+      req.method === "POST" && pathname === "/api/auth/logout";
     const clientIp = getClientIp(req);
 
     if (isHealthEndpoint) {
@@ -701,9 +834,85 @@ const server = http.createServer(async (req, res) => {
         sendRateLimited(res, healthLimit.retryAfter);
         return;
       }
+      sendJson(res, 200, { ok: true, control: "up" });
+      return;
     }
 
-    if (!isHealthEndpoint && !isAuthorized(req)) {
+    if (isAuthStatusEndpoint) {
+      const sessionInfo = getSessionFromRequest(req);
+      sendJson(res, 200, {
+        ok: true,
+        requireAuth: REQUIRE_CONTROL_AUTH,
+        authenticated: sessionInfo.ok,
+        expiresAt: sessionInfo.session
+          ? new Date(sessionInfo.session.expiresAtMs).toISOString()
+          : null
+      });
+      return;
+    }
+
+    if (isLoginPage) {
+      if (!REQUIRE_CONTROL_AUTH || isAuthorized(req)) {
+        sendRedirect(res, "/");
+        return;
+      }
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      res.end(getLoginUiHtml());
+      return;
+    }
+
+    if (isLoginEndpoint) {
+      if (!REQUIRE_CONTROL_AUTH) {
+        sendJson(res, 200, { ok: true, requireAuth: false });
+        return;
+      }
+
+      const raw = await readBody(req);
+      const body = raw ? JSON.parse(raw) : {};
+      const email = String(body.email || "").trim();
+      const password = String(body.password || "");
+
+      const isValidEmail = safeEqual(email, CONTROL_AUTH_EMAIL);
+      const isValidPassword = safeEqual(password, CONTROL_AUTH_PASSWORD);
+      if (!isValidEmail || !isValidPassword) {
+        const authLimit = consumeRateLimit(
+          rateLimitState.authFail,
+          `auth:${clientIp}`,
+          Math.max(1, AUTH_FAIL_RATE_LIMIT_MAX),
+          Math.max(1000, AUTH_FAIL_RATE_LIMIT_WINDOW_MS)
+        );
+        if (!authLimit.allowed) {
+          sendRateLimited(res, authLimit.retryAfter);
+          return;
+        }
+        sendJson(res, 401, {
+          ok: false,
+          error: "invalid_credentials",
+          message: "Invalid email or password"
+        });
+        return;
+      }
+
+      rateLimitState.authFail.delete(`auth:${clientIp}`);
+      const session = createSession(email);
+      setSessionCookie(res, session.token, session.expiresAt);
+      sendJson(res, 200, {
+        ok: true,
+        authenticated: true,
+        expiresAt: session.expiresAt.toISOString()
+      });
+      return;
+    }
+
+    if (isLogoutEndpoint) {
+      const cookies = parseCookies(req.headers.cookie);
+      clearSessionToken(cookies[SESSION_COOKIE_NAME]);
+      clearSessionCookie(res);
+      sendJson(res, 200, { ok: true });
+      return;
+    }
+
+    if (!isAuthorized(req)) {
       const authLimit = consumeRateLimit(
         rateLimitState.authFail,
         `auth:${clientIp}`,
@@ -714,7 +923,11 @@ const server = http.createServer(async (req, res) => {
         sendRateLimited(res, authLimit.retryAfter);
         return;
       }
-      sendAuthRequired(res);
+      if (isApi) {
+        sendAuthRequired(res);
+      } else {
+        sendRedirect(res, "/login");
+      }
       return;
     }
 
@@ -763,11 +976,6 @@ const server = http.createServer(async (req, res) => {
       const body = raw ? JSON.parse(raw) : {};
       const status = await requestQr(body || {});
       sendJson(res, 200, { ok: true, status });
-      return;
-    }
-
-    if (req.method === "GET" && pathname === "/api/health") {
-      sendJson(res, 200, { ok: true, control: "up" });
       return;
     }
 

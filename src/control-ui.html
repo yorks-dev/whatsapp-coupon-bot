@@ -469,6 +469,12 @@
       padding: 1rem 0 0.75rem;
     }
 
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
     .header-title {
       font-size: 1.125rem;
       font-weight: 700;
@@ -487,10 +493,15 @@
     <!-- Header -->
     <div class="header">
       <h1 class="header-title">⚡ Coupon Bot</h1>
-      <span id="monitoringBadge" class="badge badge-muted">
-        <span class="badge-dot"></span>
-        Offline
-      </span>
+      <div class="header-right">
+        <span id="monitoringBadge" class="badge badge-muted">
+          <span class="badge-dot"></span>
+          Offline
+        </span>
+        <button id="logoutBtn" class="btn btn-ghost" style="width:auto;height:auto;padding:0.25rem 0.625rem;">
+          Logout
+        </button>
+      </div>
     </div>
 
     <!-- Connection Status Card -->
@@ -620,6 +631,7 @@
     const startBtn = $("startBtn");
     const stopBtn = $("stopBtn");
     const qrBtn = $("qrBtn");
+    const logoutBtn = $("logoutBtn");
     const clearBtn = $("clearBtn");
     const qrSection = $("qrSection");
     const qrBox = $("qrBox");
@@ -666,7 +678,10 @@
       try { payload = raw ? JSON.parse(raw) : null; } catch (_) { payload = null; }
       if (!res.ok) {
         const base = payload?.error || payload?.message || `Request failed (${res.status})`;
-        if (res.status === 401) throw new Error("Unauthorized. Refresh and login again.");
+        if (res.status === 401) {
+          window.location.replace("/login");
+          throw new Error("Unauthorized");
+        }
         if (raw && raw.trim().startsWith("<!DOCTYPE")) throw new Error(`${base}. Service restarting.`);
         throw new Error(base);
       }
@@ -825,6 +840,16 @@
       } finally {
         qrBtn.disabled = false;
         qrBtn.textContent = "📷 Generate QR";
+      }
+    });
+
+    logoutBtn.addEventListener("click", async () => {
+      logoutBtn.disabled = true;
+      try {
+        await api("/api/auth/logout", "POST");
+      } catch (_) {
+      } finally {
+        window.location.replace("/login");
       }
     });
 

@@ -15,6 +15,8 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
+      - key: TZ
+        value: Asia/Kolkata
       - key: CONTROL_HOST
         value: 0.0.0.0
       - key: ALWAYS_CONNECTED_MODE
@@ -37,6 +39,16 @@ services:
         sync: false
       - key: CONTROL_AUTH_PASSWORD
         sync: false
+      - key: CONTROL_SESSION_SECRET
+        sync: false
+      - key: SESSION_COOKIE_NAME
+        value: coupon_bot_session
+      - key: SESSION_SAMESITE
+        value: Lax
+      - key: SESSION_SECURE_COOKIE
+        value: "true"
+      - key: SESSION_MAX_ACTIVE
+        value: "200"
       - key: AUTH_PATH
         value: /var/data/.wwebjs_auth
       - key: CLIENT_ID
