@@ -67,6 +67,12 @@
         >
           Stop Monitoring
         </button>
+        <button
+          id="qrBtn"
+          class="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100"
+        >
+          Generate QR
+        </button>
       </section>
 
       <section class="mt-6 rounded-xl border bg-white p-4 shadow-sm">
@@ -98,7 +104,7 @@
         </div>
       </section>
 
-      <section class="mt-4 rounded-xl border bg-white p-4 shadow-sm">
+      <section id="logsSection" class="mt-4 rounded-xl border bg-white p-4 shadow-sm">
         <div class="mb-2 flex items-center justify-between">
           <h2 class="text-sm font-semibold uppercase tracking-wide text-slate-500">
             Logs
@@ -126,7 +132,9 @@
 
       const startBtn = document.getElementById("startBtn");
       const stopBtn = document.getElementById("stopBtn");
+      const qrBtn = document.getElementById("qrBtn");
       const clearBtn = document.getElementById("clearBtn");
+      const logsSectionEl = document.getElementById("logsSection");
 
       const messInput = document.getElementById("mess");
       const mealInput = document.getElementById("meal");
@@ -226,6 +234,11 @@
         });
       }
 
+      function updateUiByStatus(status) {
+        const logsEnabled = Boolean(status?.logsEnabled);
+        logsSectionEl.classList.toggle("hidden", !logsEnabled);
+      }
+
       function renderLogs(items) {
         const text = (items || [])
           .map((item) => `[${item.ts}] [${item.source}] ${item.line}`)
@@ -236,13 +249,16 @@
 
       async function refresh() {
         try {
-          const [statusResp, logsResp] = await Promise.all([
-            api("/api/status"),
-            api("/api/logs?limit=400")
-          ]);
+          const statusResp = await api("/api/status");
           statusEl.textContent = formatStatus(statusResp);
           renderQr(statusResp);
-          renderLogs(logsResp.logs);
+          updateUiByStatus(statusResp);
+          if (statusResp.logsEnabled) {
+            const logsResp = await api("/api/logs?limit=250");
+            renderLogs(logsResp.logs);
+          } else {
+            logsEl.textContent = "";
+          }
         } catch (error) {
           statusEl.textContent = `Error: ${error.message}`;
           qrSectionEl.classList.add("hidden");
@@ -278,12 +294,24 @@
         }
       });
 
+      qrBtn.addEventListener("click", async () => {
+        qrBtn.disabled = true;
+        try {
+          await api("/api/request-qr", "POST", { force: true });
+          await refresh();
+        } catch (error) {
+          alert(error.message);
+        } finally {
+          qrBtn.disabled = false;
+        }
+      });
+
       clearBtn.addEventListener("click", () => {
         logsEl.textContent = "";
       });
 
       refresh();
-      setInterval(refresh, 1000);
+      setInterval(refresh, 1500);
     </script>
   </body>
 </html>

@@ -148,6 +148,7 @@ if (quietMode) {
       originalLog(...args);
     }
   };
+  console.error = () => {};
   console.warn = () => {};
   console.info = () => {};
 }
@@ -266,16 +267,40 @@ function setupControlCommandChannel() {
       const type = String(command?.type || "").toLowerCase();
       if (type === "set_runtime") {
         applyRuntimeOverrides(command.config || {});
-      } else if (type === "set_monitoring") {
+        continue;
+      }
+      if (type === "set_monitoring") {
         setMonitoringEnabled(
           parseBoolean(command.enabled, false),
           "control_command"
         );
-      } else if (type === "ping") {
-        emitControlEvent("pong");
-      } else {
-        console.warn("Unknown control command type:", command?.type);
+        continue;
       }
+      if (type === "request_qr") {
+        (async () => {
+          try {
+            const force = parseBoolean(command.force, false);
+            runtimeState.connected = false;
+            if (force) {
+              try {
+                await client.destroy();
+              } catch (_) {}
+              await sleep(750);
+            }
+            await initializeClient();
+          } catch (error) {
+            emitControlEvent("initialize_failed", {
+              message: String(error?.message || error || "")
+            });
+          }
+        })();
+        continue;
+      }
+      if (type === "ping") {
+        emitControlEvent("pong");
+        continue;
+      }
+      console.warn("Unknown control command type:", command?.type);
     }
   });
 

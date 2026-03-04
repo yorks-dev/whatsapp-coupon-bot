@@ -390,7 +390,9 @@ function getStatusPayload() {
     stoppedAt: state.stoppedAt,
     exitCode: state.exitCode,
     signal: state.signal,
-    config: state.config
+    config: state.config,
+    logsEnabled: LOG_LIMIT > 0,
+    logLimit: LOG_LIMIT
   };
 }
 
@@ -559,6 +561,24 @@ async function stopBot() {
   return { stopped: true, reason: "monitoring_disabled" };
 }
 
+async function requestQr(options = {}) {
+  await ensureBotStarted(state.config || {});
+
+  const force = parseBoolean(options.force, false);
+  if (state.botConnected && !force) {
+    return getStatusPayload();
+  }
+
+  if (!sendBotCommand({ type: "request_qr", force })) {
+    throw new Error("Bot process unavailable for QR request");
+  }
+
+  state.needQr = true;
+  if (force) state.qr = null;
+  appendLog("control", `QR requested (force=${String(force)})`);
+  return getStatusPayload();
+}
+
 function getUiHtml() {
   const uiPath = path.join(__dirname, "control-ui.html");
   return fs.readFileSync(uiPath, "utf8");
@@ -587,6 +607,10 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "GET" && pathname === "/api/logs") {
+      if (LOG_LIMIT <= 0) {
+        sendJson(res, 200, { logs: [] });
+        return;
+      }
       const limit = Number(reqUrl.searchParams.get("limit") || 300);
       const safeLimit = Number.isFinite(limit)
         ? Math.max(1, Math.min(1000, limit))
@@ -608,6 +632,14 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "POST" && pathname === "/api/stop") {
       const result = await stopBot();
       sendJson(res, 200, { ok: true, result, status: getStatusPayload() });
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/api/request-qr") {
+      const raw = await readBody(req);
+      const body = raw ? JSON.parse(raw) : {};
+      const status = await requestQr(body || {});
+      sendJson(res, 200, { ok: true, status });
       return;
     }
 
