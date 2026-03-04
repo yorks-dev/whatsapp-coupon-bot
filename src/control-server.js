@@ -12,7 +12,8 @@ const hasManagedPort = Boolean(process.env.PORT);
 const CONTROL_HOST =
   process.env.CONTROL_HOST || (hasManagedPort ? "0.0.0.0" : "127.0.0.1");
 const CONTROL_PORT = Number(process.env.PORT || process.env.CONTROL_PORT || 8788);
-const LOG_LIMIT = Number(process.env.CONTROL_LOG_LIMIT || 300);
+const LOG_LIMIT = Number(process.env.CONTROL_LOG_LIMIT || 100);
+const LOG_LINE_MAX_CHARS = Number(process.env.LOG_LINE_MAX_CHARS || 500);
 const BOT_MAX_OLD_SPACE_MB = Number(process.env.BOT_MAX_OLD_SPACE_MB || 160);
 const CONTROL_EVENT_PREFIX = "__CONTROL_EVENT__";
 const REQUIRE_CONTROL_AUTH = parseBoolean(
@@ -103,10 +104,14 @@ function appendLog(source, text) {
     .filter((line) => line.length > 0);
 
   for (const line of lines) {
+    const trimmedLine =
+      line.length > LOG_LINE_MAX_CHARS
+        ? line.slice(0, LOG_LINE_MAX_CHARS) + "…[truncated]"
+        : line;
     state.logs.push({
       ts: new Date().toISOString(),
       source,
-      line
+      line: trimmedLine
     });
   }
 
@@ -183,6 +188,7 @@ function handleControlEvent(event) {
   } else if (type === "authenticated") {
     state.botConnected = true;
     state.needQr = false;
+    state.qr = null;
   } else if (type === "wa_state") {
     const waState = String(event.state || "").toUpperCase();
     if (waState === "CONNECTED") {
@@ -290,7 +296,7 @@ async function cleanupStaleProcesses() {
   for (const proc of candidates) {
     try {
       process.kill(proc.pid, "SIGTERM");
-    } catch (_) {}
+    } catch (_) { }
   }
 
   await sleep(1200);
@@ -303,7 +309,7 @@ async function cleanupStaleProcesses() {
         "control",
         `Force-killed stale process pid=${proc.pid} (${proc.command})`
       );
-    } catch (_) {}
+    } catch (_) { }
   }
 }
 
@@ -423,7 +429,7 @@ async function terminateBotProcess() {
     const timeout = setTimeout(() => {
       try {
         proc.kill("SIGKILL");
-      } catch (_) {}
+      } catch (_) { }
       finish();
     }, 8000);
 
@@ -666,7 +672,7 @@ const server = http.createServer(async (req, res) => {
 async function shutdown() {
   try {
     await terminateBotProcess();
-  } catch (_) {}
+  } catch (_) { }
   process.exit(0);
 }
 

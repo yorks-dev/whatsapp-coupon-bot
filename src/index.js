@@ -125,8 +125,8 @@ const chromiumSingleProcess = parseBoolean(
   false
 );
 const restartDelayMs = Number(process.env.RESTART_DELAY_MS || 5000);
-const dedupeCacheSize = Number(process.env.DEDUPE_CACHE_SIZE || 1000);
-const maxRecentSenders = Number(process.env.MAX_RECENT_SENDERS || 5000);
+const dedupeCacheSize = Number(process.env.DEDUPE_CACHE_SIZE || 500);
+const maxRecentSenders = Number(process.env.MAX_RECENT_SENDERS || 500);
 const healthPort = Number(process.env.HEALTH_PORT || 0);
 const keepaliveUrl = (process.env.KEEPALIVE_URL || "").trim();
 const keepaliveIntervalSeconds = Number(
@@ -148,9 +148,9 @@ if (quietMode) {
       originalLog(...args);
     }
   };
-  console.error = () => {};
-  console.warn = () => {};
-  console.info = () => {};
+  console.error = () => { };
+  console.warn = () => { };
+  console.info = () => { };
 }
 
 if (
@@ -171,7 +171,16 @@ const runtimeState = {
 
 function debugLog(...args) {
   if (!debugLogs) return;
-  console.log("[debug]", ...args);
+  const parts = args.map((a) => {
+    if (typeof a === "string") return a;
+    try {
+      const s = JSON.stringify(a);
+      return s.length > 500 ? s.slice(0, 500) + "…" : s;
+    } catch (_) {
+      return String(a);
+    }
+  });
+  console.log("[debug]", ...parts);
 }
 
 function emitControlEvent(type, payload = {}) {
@@ -184,7 +193,7 @@ function emitControlEvent(type, payload = {}) {
         ...payload
       })}`
     );
-  } catch (_) {}
+  } catch (_) { }
 }
 
 function oneLine(text) {
@@ -284,11 +293,17 @@ function setupControlCommandChannel() {
             if (force) {
               skipNextReconnect = true;
               try {
-                await client.destroy();
-              } catch (_) {}
+                // logout() clears saved session files so next initialize()
+                // shows a fresh QR instead of restoring the old session.
+                await client.logout();
+              } catch (_) {
+                // If already disconnected, logout may fail — fall back to destroy.
+                try { await client.destroy(); } catch (_2) { }
+              }
               await sleep(750);
             }
             await initializeClient();
+
           } catch (error) {
             emitControlEvent("initialize_failed", {
               message: String(error?.message || error || "")
@@ -438,7 +453,7 @@ async function initializeClient() {
     });
     try {
       await client.destroy();
-    } catch (_) {}
+    } catch (_) { }
   } finally {
     if (qrHintTimer) {
       clearTimeout(qrHintTimer);
@@ -479,7 +494,7 @@ function scheduleReconnect(reason) {
     console.log(`Attempting reconnect after disconnect (${reason})...`);
     try {
       await client.destroy();
-    } catch (_) {}
+    } catch (_) { }
     await sleep(750);
     await initializeClient();
   }, restartDelayMs);
@@ -516,7 +531,7 @@ function startHealthServer() {
       );
       try {
         healthServer.close();
-      } catch (_) {}
+      } catch (_) { }
       healthServer = null;
       return;
     }
@@ -679,8 +694,7 @@ client.on("message_create", async (message) => {
       "unknown";
 
     console.log(
-      `[group-msg] group="${chat.name}" groupId=${chat.id._serialized} fromMe=${
-        message.fromMe
+      `[group-msg] group="${chat.name}" groupId=${chat.id._serialized} fromMe=${message.fromMe
       } author=${author} body="${oneLine(message.body)}"`
     );
   } catch (error) {
@@ -844,12 +858,12 @@ process.on("SIGINT", async () => {
   if (healthServer) {
     try {
       await new Promise((resolve) => healthServer.close(resolve));
-    } catch (_) {}
+    } catch (_) { }
   }
   try {
     skipNextReconnect = true;
     await client.destroy();
-  } catch (_) {}
+  } catch (_) { }
   process.exit(0);
 });
 
