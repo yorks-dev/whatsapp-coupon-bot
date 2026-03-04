@@ -16,6 +16,15 @@ const LOG_LIMIT = Number(process.env.CONTROL_LOG_LIMIT || 100);
 const LOG_LINE_MAX_CHARS = Number(process.env.LOG_LINE_MAX_CHARS || 500);
 const BOT_MAX_OLD_SPACE_MB = Number(process.env.BOT_MAX_OLD_SPACE_MB || 160);
 const CONTROL_EVENT_PREFIX = "__CONTROL_EVENT__";
+const HEALTH_RATE_LIMIT_MAX = Number(process.env.HEALTH_RATE_LIMIT_MAX || 30);
+const HEALTH_RATE_LIMIT_WINDOW_MS =
+  Number(process.env.HEALTH_RATE_LIMIT_WINDOW_SECONDS || 60) * 1000;
+const AUTH_FAIL_RATE_LIMIT_MAX = Number(
+  process.env.AUTH_FAIL_RATE_LIMIT_MAX || 20
+);
+const AUTH_FAIL_RATE_LIMIT_WINDOW_MS =
+  Number(process.env.AUTH_FAIL_RATE_LIMIT_WINDOW_SECONDS || 300) * 1000;
+const RATE_LIMIT_MAX_KEYS = Number(process.env.RATE_LIMIT_MAX_KEYS || 5000);
 const REQUIRE_CONTROL_AUTH = parseBoolean(
   process.env.REQUIRE_CONTROL_AUTH,
   false
@@ -51,6 +60,10 @@ const state = {
   lastDisconnectReason: null,
   logs: []
 };
+const rateLimitState = {
+  health: new Map(),
+  authFail: new Map()
+};
 
 function safeEqual(left, right) {
   const a = Buffer.from(String(left || ""));
@@ -76,6 +89,62 @@ function parseBasicAuthHeader(value) {
   }
 }
 
+function getClientIp(req) {
+  const forwarded = String(req.headers["x-forwarded-for"] || "").trim();
+  if (forwarded) {
+    const first = forwarded.split(",")[0]?.trim();
+    if (first) return first;
+  }
+  const realIp = String(req.headers["x-real-ip"] || "").trim();
+  if (realIp) return realIp;
+  return req.socket?.remoteAddress || "unknown";
+}
+
+function pruneRateLimitMap(map, now, windowMs) {
+  for (const [key, record] of map) {
+    if (!record || now - record.lastSeenAt > windowMs * 2) {
+      map.delete(key);
+    }
+  }
+  while (map.size > RATE_LIMIT_MAX_KEYS) {
+    const oldestKey = map.keys().next().value;
+    map.delete(oldestKey);
+  }
+}
+
+function consumeRateLimit(map, key, maxHits, windowMs) {
+  const now = Date.now();
+  let record = map.get(key);
+
+  if (!record || now - record.windowStartAt >= windowMs) {
+    record = {
+      windowStartAt: now,
+      hits: 1,
+      lastSeenAt: now
+    };
+    map.set(key, record);
+    pruneRateLimitMap(map, now, windowMs);
+    return { allowed: true, remaining: Math.max(0, maxHits - 1), retryAfter: 0 };
+  }
+
+  record.hits += 1;
+  record.lastSeenAt = now;
+  map.delete(key);
+  map.set(key, record);
+
+  const remaining = Math.max(0, maxHits - record.hits);
+  if (record.hits <= maxHits) {
+    return { allowed: true, remaining, retryAfter: 0 };
+  }
+
+  const retryAfterMs = windowMs - (now - record.windowStartAt);
+  return {
+    allowed: false,
+    remaining: 0,
+    retryAfter: Math.max(1, Math.ceil(retryAfterMs / 1000))
+  };
+}
+
 function isAuthorized(req) {
   if (!REQUIRE_CONTROL_AUTH) return true;
   const parsed = parseBasicAuthHeader(req.headers.authorization);
@@ -93,6 +162,21 @@ function sendAuthRequired(res) {
   });
   res.end(
     JSON.stringify({ ok: false, error: "auth_required", message: "Unauthorized" })
+  );
+}
+
+function sendRateLimited(res, retryAfterSeconds) {
+  res.writeHead(429, {
+    "content-type": "application/json",
+    "retry-after": String(retryAfterSeconds)
+  });
+  res.end(
+    JSON.stringify({
+      ok: false,
+      error: "rate_limited",
+      message: "Too many requests",
+      retryAfterSeconds
+    })
   );
 }
 
@@ -604,8 +688,32 @@ const server = http.createServer(async (req, res) => {
     const reqUrl = new URL(req.url, `http://${req.headers.host}`);
     const pathname = reqUrl.pathname;
     const isHealthEndpoint = req.method === "GET" && pathname === "/api/health";
+    const clientIp = getClientIp(req);
+
+    if (isHealthEndpoint) {
+      const healthLimit = consumeRateLimit(
+        rateLimitState.health,
+        `health:${clientIp}`,
+        Math.max(1, HEALTH_RATE_LIMIT_MAX),
+        Math.max(1000, HEALTH_RATE_LIMIT_WINDOW_MS)
+      );
+      if (!healthLimit.allowed) {
+        sendRateLimited(res, healthLimit.retryAfter);
+        return;
+      }
+    }
 
     if (!isHealthEndpoint && !isAuthorized(req)) {
+      const authLimit = consumeRateLimit(
+        rateLimitState.authFail,
+        `auth:${clientIp}`,
+        Math.max(1, AUTH_FAIL_RATE_LIMIT_MAX),
+        Math.max(1000, AUTH_FAIL_RATE_LIMIT_WINDOW_MS)
+      );
+      if (!authLimit.allowed) {
+        sendRateLimited(res, authLimit.retryAfter);
+        return;
+      }
       sendAuthRequired(res);
       return;
     }
