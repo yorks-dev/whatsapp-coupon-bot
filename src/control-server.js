@@ -45,6 +45,9 @@ const state = {
   monitoringEnabled: false,
   needQr: false,
   qr: null,
+  lastEventType: null,
+  lastEventAt: null,
+  lastDisconnectReason: null,
   logs: []
 };
 
@@ -116,6 +119,8 @@ function handleControlEvent(event) {
   if (!event || typeof event !== "object") return;
 
   const type = String(event.type || "").toLowerCase();
+  state.lastEventType = type || null;
+  state.lastEventAt = String(event.ts || new Date().toISOString());
 
   if (type === "qr") {
     if (state.botConnected && !state.needQr) {
@@ -188,6 +193,7 @@ function handleControlEvent(event) {
   } else if (type === "disconnected") {
     state.botConnected = false;
     const reason = String(event.reason || "").toUpperCase();
+    state.lastDisconnectReason = reason || null;
     if (reason.includes("LOGOUT")) {
       state.needQr = true;
     }
@@ -392,7 +398,10 @@ function getStatusPayload() {
     signal: state.signal,
     config: state.config,
     logsEnabled: LOG_LIMIT > 0,
-    logLimit: LOG_LIMIT
+    logLimit: LOG_LIMIT,
+    lastEventType: state.lastEventType,
+    lastEventAt: state.lastEventAt,
+    lastDisconnectReason: state.lastDisconnectReason
   };
 }
 

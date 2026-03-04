@@ -282,6 +282,7 @@ function setupControlCommandChannel() {
             const force = parseBoolean(command.force, false);
             runtimeState.connected = false;
             if (force) {
+              skipNextReconnect = true;
               try {
                 await client.destroy();
               } catch (_) {}
@@ -408,6 +409,7 @@ let reconnectTimer = null;
 let healthServer = null;
 let keepaliveTimer = null;
 let qrHintTimer = null;
+let skipNextReconnect = false;
 const processedMessageIds = new Set();
 
 async function initializeClient() {
@@ -448,9 +450,24 @@ async function initializeClient() {
 
 function scheduleReconnect(reason) {
   if (!autoRestartOnDisconnect) return;
+  if (skipNextReconnect) {
+    skipNextReconnect = false;
+    emitControlEvent("reconnect_skipped", {
+      reason: String(reason || ""),
+      source: "manual_destroy"
+    });
+    return;
+  }
   if (reconnectTimer) return;
 
   const normalized = String(reason || "").toUpperCase();
+  if (normalized.includes("NAVIGATION")) {
+    emitControlEvent("reconnect_skipped", {
+      reason: String(reason || ""),
+      source: "navigation_disconnect"
+    });
+    return;
+  }
   if (normalized.includes("LOGOUT")) {
     console.log(
       "Session logged out. Reinitializing to generate a fresh QR for login."
@@ -556,6 +573,10 @@ client.on("authenticated", () => {
     clearTimeout(qrHintTimer);
     qrHintTimer = null;
   }
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
   console.log("WhatsApp session authenticated.");
   runtimeState.connected = true;
   emitControlEvent("authenticated");
@@ -574,6 +595,10 @@ client.on("ready", async () => {
   if (qrHintTimer) {
     clearTimeout(qrHintTimer);
     qrHintTimer = null;
+  }
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
   }
   console.log("Bot is ready and connected.");
   emitControlEvent("ready");
@@ -822,6 +847,7 @@ process.on("SIGINT", async () => {
     } catch (_) {}
   }
   try {
+    skipNextReconnect = true;
     await client.destroy();
   } catch (_) {}
   process.exit(0);

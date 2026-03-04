@@ -193,6 +193,8 @@
           `monitoring=${String(Boolean(status.monitoringEnabled))}`,
           `connected=${String(Boolean(status.botConnected))}`,
           `needQr=${String(Boolean(status.needQr))}`,
+          `lastEvent=${status.lastEventType ?? "n/a"}`,
+          `disconnect=${status.lastDisconnectReason ?? "n/a"}`,
           `meal=${cfg.meal ?? "n/a"}`,
           `mess=${cfg.mess ?? "n/a"}`,
           `startedAt=${status.startedAt ?? "n/a"}`
