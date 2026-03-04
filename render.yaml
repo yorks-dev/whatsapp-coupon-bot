@@ -38,9 +38,15 @@ services:
       - key: ALLOW_FROM_ME
         value: "false"
       - key: DEBUG_LOGS
-        value: "true"
+        value: "false"
       - key: LOG_ALL_GROUP_MESSAGES
+        value: "false"
+      - key: DISABLE_TERMINAL_QR
         value: "true"
+      - key: CONTROL_LOG_LIMIT
+        value: "300"
+      - key: BOT_MAX_OLD_SPACE_MB
+        value: "160"
       - key: REPLY_COOLDOWN_SECONDS
         value: "0"
       - key: AUTO_RESTART_ON_DISCONNECT

@@ -12,7 +12,8 @@ const hasManagedPort = Boolean(process.env.PORT);
 const CONTROL_HOST =
   process.env.CONTROL_HOST || (hasManagedPort ? "0.0.0.0" : "127.0.0.1");
 const CONTROL_PORT = Number(process.env.PORT || process.env.CONTROL_PORT || 8788);
-const LOG_LIMIT = Number(process.env.CONTROL_LOG_LIMIT || 1000);
+const LOG_LIMIT = Number(process.env.CONTROL_LOG_LIMIT || 300);
+const BOT_MAX_OLD_SPACE_MB = Number(process.env.BOT_MAX_OLD_SPACE_MB || 160);
 const CONTROL_EVENT_PREFIX = "__CONTROL_EVENT__";
 const REQUIRE_CONTROL_AUTH = parseBoolean(
   process.env.REQUIRE_CONTROL_AUTH,
@@ -451,6 +452,9 @@ async function ensureBotStarted(configInput = {}) {
 
   const botPath = path.join(__dirname, "index.js");
   const args = [
+    ...(BOT_MAX_OLD_SPACE_MB > 0
+      ? [`--max-old-space-size=${Math.max(96, BOT_MAX_OLD_SPACE_MB)}`]
+      : []),
     botPath,
     "--meal",
     state.config.meal,

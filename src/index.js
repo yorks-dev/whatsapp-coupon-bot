@@ -110,9 +110,19 @@ const showGroupsOnReady = parseBoolean(process.env.LOG_GROUPS_ON_READY, false);
 let allowFromMe = runtimeOptions.allowFromMe;
 let debugLogs = runtimeOptions.debugLogs;
 const logAllGroupMessages = parseBoolean(process.env.LOG_ALL_GROUP_MESSAGES, false);
+const controlEventMode = parseBoolean(process.env.CONTROL_EVENT_MODE, false);
 const autoRestartOnDisconnect = parseBoolean(
   process.env.AUTO_RESTART_ON_DISCONNECT,
   true
+);
+const disableTerminalQr = parseBoolean(
+  process.env.DISABLE_TERMINAL_QR,
+  controlEventMode || process.env.NODE_ENV === "production"
+);
+const chromiumExtraArgs = parseCsv(process.env.CHROMIUM_EXTRA_ARGS);
+const chromiumSingleProcess = parseBoolean(
+  process.env.CHROMIUM_SINGLE_PROCESS,
+  false
 );
 const restartDelayMs = Number(process.env.RESTART_DELAY_MS || 5000);
 const dedupeCacheSize = Number(process.env.DEDUPE_CACHE_SIZE || 1000);
@@ -122,7 +132,6 @@ const keepaliveUrl = (process.env.KEEPALIVE_URL || "").trim();
 const keepaliveIntervalSeconds = Number(
   process.env.KEEPALIVE_INTERVAL_SECONDS || 300
 );
-const controlEventMode = parseBoolean(process.env.CONTROL_EVENT_MODE, false);
 const qrHintDelayMs = Number(process.env.QR_HINT_DELAY_MS || 7000);
 const monitoringEnabledOnBoot = parseBoolean(
   process.env.MONITORING_ENABLED_ON_BOOT,
@@ -332,7 +341,27 @@ const client = new Client({
   puppeteer: {
     headless: runtimeOptions.resolvedHeadless,
     executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
-    args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
+    args: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-gpu",
+      "--disable-software-rasterizer",
+      "--disable-extensions",
+      "--disable-sync",
+      "--disable-background-networking",
+      "--disable-backgrounding-occluded-windows",
+      "--disable-renderer-backgrounding",
+      "--disable-background-timer-throttling",
+      "--no-first-run",
+      "--no-default-browser-check",
+      "--mute-audio",
+      "--metrics-recording-only",
+      "--renderer-process-limit=1",
+      "--no-zygote",
+      ...(chromiumSingleProcess ? ["--single-process"] : []),
+      ...chromiumExtraArgs
+    ]
   }
 });
 
@@ -367,6 +396,9 @@ async function initializeClient() {
     emitControlEvent("initialize_failed", {
       message: String(error?.message || error || "")
     });
+    try {
+      await client.destroy();
+    } catch (_) {}
   } finally {
     if (qrHintTimer) {
       clearTimeout(qrHintTimer);
@@ -390,6 +422,10 @@ function scheduleReconnect(reason) {
   reconnectTimer = setTimeout(async () => {
     reconnectTimer = null;
     console.log(`Attempting reconnect after disconnect (${reason})...`);
+    try {
+      await client.destroy();
+    } catch (_) {}
+    await sleep(750);
     await initializeClient();
   }, restartDelayMs);
 }
@@ -468,8 +504,12 @@ client.on("qr", (qr) => {
     clearTimeout(qrHintTimer);
     qrHintTimer = null;
   }
-  console.log("\nScan this QR code with WhatsApp:\n");
-  qrcode.generate(qr, { small: true });
+  if (!disableTerminalQr) {
+    console.log("\nScan this QR code with WhatsApp:\n");
+    qrcode.generate(qr, { small: true });
+  } else {
+    console.log("QR received. Scan it from the control UI.");
+  }
   emitControlEvent("qr", { qr });
 });
 
