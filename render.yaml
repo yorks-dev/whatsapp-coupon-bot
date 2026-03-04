@@ -41,10 +41,12 @@ services:
         value: "false"
       - key: LOG_ALL_GROUP_MESSAGES
         value: "false"
+      - key: QUIET_MODE
+        value: "true"
       - key: DISABLE_TERMINAL_QR
         value: "true"
       - key: CONTROL_LOG_LIMIT
-        value: "300"
+        value: "0"
       - key: BOT_MAX_OLD_SPACE_MB
         value: "160"
       - key: REPLY_COOLDOWN_SECONDS

@@ -93,6 +93,8 @@ function sendAuthRequired(res) {
 }
 
 function appendLog(source, text) {
+  if (LOG_LIMIT <= 0) return;
+
   const lines = String(text || "")
     .split(/\r?\n/)
     .filter((line) => line.length > 0);

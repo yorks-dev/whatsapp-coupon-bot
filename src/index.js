@@ -133,11 +133,24 @@ const keepaliveIntervalSeconds = Number(
   process.env.KEEPALIVE_INTERVAL_SECONDS || 300
 );
 const qrHintDelayMs = Number(process.env.QR_HINT_DELAY_MS || 7000);
+const quietMode = parseBoolean(process.env.QUIET_MODE, false);
 const monitoringEnabledOnBoot = parseBoolean(
   process.env.MONITORING_ENABLED_ON_BOOT,
   false
 );
 let monitoringEnabled = controlEventMode ? monitoringEnabledOnBoot : true;
+
+if (quietMode) {
+  const originalLog = console.log.bind(console);
+  console.log = (...args) => {
+    const first = args[0];
+    if (typeof first === "string" && first.startsWith("__CONTROL_EVENT__")) {
+      originalLog(...args);
+    }
+  };
+  console.warn = () => {};
+  console.info = () => {};
+}
 
 if (
   activeMealModeInput !== activeMealMode &&
