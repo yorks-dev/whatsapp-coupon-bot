@@ -14,7 +14,7 @@ test("runtime options + parser integration for lunch/neelkesh", () => {
   });
 
   const parsed = parseCouponMessage({
-    text: "Seeling neelksh coupon",
+    text: "Seeling neelksh lunch coupon",
     allowedMessNames: runtime.allowedMessNames,
     activeMealMode: runtime.activeMealMode
   });

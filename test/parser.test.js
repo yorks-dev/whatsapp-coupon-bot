@@ -36,17 +36,26 @@ test("matches typo-heavy sentence", () => {
   assert.equal(result.MESS_TIME, "lunch");
 });
 
-test("uses active meal fallback when meal is missing", () => {
+test("rejects when meal is missing (strict mode)", () => {
   const result = parseCouponMessage({
     text: "selling neelkesh coupon",
     activeMealMode: "dinner",
     allowedMessNames: ["neelkesh", "firstman"]
   });
 
-  assert.equal(result.matched, true);
-  assert.equal(result.MESS_NAME, "neelkesh");
-  assert.equal(result.MESS_TIME, "dinner");
-  assert.ok(result.reasons.includes("meal_fallback_from_active_mode"));
+  assert.equal(result.matched, false);
+  assert.ok(result.reasons.includes("missing_meal"));
+});
+
+test("rejects when detected meal mismatches active mode", () => {
+  const result = parseCouponMessage({
+    text: "selling neelkesh lunch coupon",
+    activeMealMode: "dinner",
+    allowedMessNames: ["neelkesh", "firstman"]
+  });
+
+  assert.equal(result.matched, false);
+  assert.ok(result.reasons.includes("meal_mismatch_active_mode"));
 });
 
 test("rejects buyer-style sentence", () => {

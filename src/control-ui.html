@@ -492,7 +492,7 @@
   <div class="container">
     <!-- Header -->
     <div class="header">
-      <h1 class="header-title">⚡ Coupon Bot</h1>
+      <h1 class="header-title">Coupon Bot Control</h1>
       <div class="header-right">
         <span id="monitoringBadge" class="badge badge-muted">
           <span class="badge-dot"></span>
@@ -539,9 +539,9 @@
         <span class="card-title">Controls</span>
       </div>
       <div class="btn-row">
-        <button id="startBtn" class="btn btn-success">▶ Start</button>
-        <button id="stopBtn" class="btn btn-outline" disabled>⏹ Stop</button>
-        <button id="qrBtn" class="btn btn-outline btn-full">📷 Generate QR</button>
+        <button id="startBtn" class="btn btn-success">Start</button>
+        <button id="stopBtn" class="btn btn-outline" disabled>Stop</button>
+        <button id="qrBtn" class="btn btn-outline btn-full">Generate QR</button>
       </div>
     </div>
 
@@ -554,17 +554,17 @@
         <div class="config-item">
           <label class="label" for="mess">Mess</label>
           <select id="mess" class="select">
+            <option value="all">All</option>
             <option value="neelkesh">Neelkesh</option>
             <option value="firstman">Firstman</option>
-            <option value="all">All</option>
           </select>
         </div>
         <div class="config-item">
           <label class="label" for="meal">Meal</label>
           <select id="meal" class="select">
+            <option value="all">All</option>
             <option value="lunch">Lunch</option>
             <option value="dinner">Dinner</option>
-            <option value="all">All</option>
           </select>
         </div>
       </div>
@@ -588,7 +588,7 @@
     <!-- QR Card -->
     <div id="qrSection" class="card hidden">
       <div class="card-header">
-        <span class="card-title">🔐 QR Login</span>
+        <span class="card-title">QR Login</span>
         <span class="badge badge-warning"><span class="badge-dot"></span> Scan Required</span>
       </div>
       <p class="card-description" style="margin-bottom: 0.75rem;">
@@ -646,6 +646,28 @@
 
     let lastQrValue = "";
     let qrInstance = null;
+    let formHydrated = false;
+
+    function normalizeMessValue(raw) {
+      const value = String(raw || "").trim().toLowerCase();
+      if (!value) return "all";
+      if (value === "neelkesh" || value === "firstman") return value;
+      return "all";
+    }
+
+    function normalizeMealValue(raw) {
+      const value = String(raw || "").trim().toLowerCase();
+      if (value === "lunch" || value === "dinner" || value === "all") return value;
+      return "all";
+    }
+
+    function hydrateFormFromConfig(cfg = {}) {
+      messInput.value = normalizeMessValue(cfg.mess);
+      mealInput.value = normalizeMealValue(cfg.meal);
+      allowFromMeInput.checked = Boolean(cfg.allowFromMe);
+      debugInput.checked = Boolean(cfg.debugLogs);
+      formHydrated = true;
+    }
 
     // ── Toast ─────────────────────────────────────────────────────────────
     function showToast(message, type = "info") {
@@ -717,18 +739,21 @@
       statusEvent.textContent = s.lastEventType ?? "—";
       statusMess.textContent = (cfg.mess || "—").replace(",", ", ");
       statusMeal.textContent = cfg.meal || "—";
+      if (!formHydrated) {
+        hydrateFormFromConfig(cfg);
+      }
 
       // Buttons
       if (s.monitoringEnabled) {
-        startBtn.disabled = true;
-        startBtn.className = "btn btn-success";
-        startBtn.textContent = "● Running";
+        startBtn.disabled = false;
+        startBtn.className = "btn btn-outline";
+        startBtn.textContent = "↻ Apply Config";
         stopBtn.disabled = false;
         stopBtn.className = "btn btn-outline";
       } else {
         startBtn.disabled = false;
         startBtn.className = "btn btn-success";
-        startBtn.textContent = "▶ Start";
+        startBtn.textContent = "Start";
         stopBtn.disabled = true;
         stopBtn.className = "btn btn-outline";
       }
@@ -797,20 +822,28 @@
     // ── Button handlers ───────────────────────────────────────────────────
     startBtn.addEventListener("click", async () => {
       startBtn.disabled = true;
-      startBtn.textContent = "Starting…";
+      const wasMonitoring = stopBtn.disabled === false;
+      startBtn.textContent = wasMonitoring ? "Applying…" : "Starting…";
       try {
-        await api("/api/start", "POST", {
+        const response = await api("/api/start", "POST", {
           meal: mealInput.value,
           mess: messInput.value,
           allowFromMe: allowFromMeInput.checked,
           debugLogs: debugInput.checked
         });
-        showToast("✅ Monitoring started", "success");
+        hydrateFormFromConfig(response?.status?.config || {});
+        const applied = response?.status?.config || {};
+        showToast(
+          wasMonitoring
+            ? `Applied: ${applied.mess || messInput.value} / ${applied.meal || mealInput.value}`
+            : "Monitoring started",
+          "success"
+        );
         await refresh();
       } catch (e) {
-        showToast("❌ " + e.message, "error");
+        showToast("Error: " + e.message, "error");
         startBtn.disabled = false;
-        startBtn.textContent = "▶ Start";
+        startBtn.textContent = "Start";
       }
     });
 
@@ -819,12 +852,12 @@
       stopBtn.textContent = "Stopping…";
       try {
         await api("/api/stop", "POST");
-        showToast("⏹ Monitoring stopped", "warning");
+        showToast("Monitoring stopped", "warning");
         await refresh();
       } catch (e) {
-        showToast("❌ " + e.message, "error");
+        showToast("Error: " + e.message, "error");
       } finally {
-        stopBtn.textContent = "⏹ Stop";
+        stopBtn.textContent = "Stop";
       }
     });
 
@@ -833,13 +866,13 @@
       qrBtn.textContent = "⏳ Requesting QR…";
       try {
         await api("/api/request-qr", "POST", { force: true });
-        showToast("📷 QR requested — scan when it appears", "info");
+        showToast("QR requested. Scan when it appears.", "info");
         await refresh();
       } catch (e) {
-        showToast("❌ " + e.message, "error");
+        showToast("Error: " + e.message, "error");
       } finally {
         qrBtn.disabled = false;
-        qrBtn.textContent = "📷 Generate QR";
+        qrBtn.textContent = "Generate QR";
       }
     });
 

@@ -200,6 +200,12 @@ function oneLine(text) {
   return String(text || "").replace(/\s+/g, " ").trim();
 }
 
+function shortText(text, max = 120) {
+  const value = oneLine(text);
+  if (value.length <= max) return value;
+  return `${value.slice(0, max)}...`;
+}
+
 function runtimeConfigSnapshot() {
   return {
     meal: activeMealMode,
@@ -708,12 +714,18 @@ async function handleIncomingMessage(message, source) {
 
     if (!monitoringEnabled) {
       debugLog("Skip: monitoring disabled");
+      emitControlEvent("message_skipped", { reason: "monitoring_disabled", source });
       return;
     }
 
     const messageId = message.id?._serialized || null;
     if (messageId && processedMessageIds.has(messageId)) {
       debugLog("Skip: duplicate message event", { source, messageId });
+      emitControlEvent("message_skipped", {
+        reason: "duplicate_message_event",
+        source,
+        messageId
+      });
       return;
     }
     if (messageId) {
@@ -736,6 +748,10 @@ async function handleIncomingMessage(message, source) {
 
     if (message.fromMe && !allowFromMe) {
       debugLog("Skip: message.fromMe=true and ALLOW_FROM_ME=false");
+      emitControlEvent("message_skipped", {
+        reason: "from_me_disallowed",
+        source
+      });
       return;
     }
 
@@ -747,6 +763,10 @@ async function handleIncomingMessage(message, source) {
     });
     if (!chat.isGroup) {
       debugLog("Skip: message is not from a group");
+      emitControlEvent("message_skipped", {
+        reason: "not_group",
+        source
+      });
       return;
     }
     if (!isAllowedGroup(chat)) {
@@ -755,6 +775,12 @@ async function handleIncomingMessage(message, source) {
         chatName: chat.name,
         targetGroupIds,
         targetGroupNames
+      });
+      emitControlEvent("message_skipped", {
+        reason: "group_not_allowed",
+        source,
+        chatId: chat.id._serialized,
+        chatName: chat.name
       });
       return;
     }
@@ -781,6 +807,12 @@ async function handleIncomingMessage(message, source) {
         reasons: parserResult.reasons,
         body
       });
+      emitControlEvent("message_skipped", {
+        reason: "parser_no_match",
+        source,
+        parserReasons: parserResult.reasons,
+        body: shortText(body)
+      });
       return;
     }
 
@@ -798,12 +830,22 @@ async function handleIncomingMessage(message, source) {
     debugLog("Sender resolution:", { rawSenderId, senderCandidates, senderId });
     if (!senderId || senderCandidates.length === 0) {
       console.log("Matched message but could not resolve sender ID.");
+      emitControlEvent("message_skipped", {
+        reason: "sender_unresolved",
+        source,
+        body: shortText(body)
+      });
       return;
     }
 
     if (!shouldReplyToSender(senderId)) {
       console.log(`Cooldown active. Skipping auto-reply to ${senderId}`);
       debugLog("Skip: cooldown active", { senderId, replyCooldownSeconds });
+      emitControlEvent("message_skipped", {
+        reason: "cooldown_active",
+        source,
+        senderId
+      });
       return;
     }
 
@@ -826,12 +868,27 @@ async function handleIncomingMessage(message, source) {
       ...templateValues
     });
     debugLog("Sending private message:", { senderCandidates, replyText });
+    emitControlEvent("message_matched", {
+      source,
+      groupId: chat.id._serialized,
+      groupName: chat.name,
+      body: shortText(body),
+      fields: extractedFields,
+      confidence: parserResult.confidence
+    });
 
     const deliveredTo = await sendMessageToFirstResolvableId(
       client,
       senderCandidates,
       replyText
     );
+    emitControlEvent("reply_sent", {
+      source,
+      deliveredTo,
+      groupId: chat.id._serialized,
+      groupName: chat.name,
+      fields: extractedFields
+    });
 
     console.log(
       `Sent private reply to ${deliveredTo} from group "${chat.name}" using sentence "${matchedSentence}" with parser fields ${JSON.stringify(
@@ -840,6 +897,10 @@ async function handleIncomingMessage(message, source) {
     );
   } catch (error) {
     console.error("Error while processing message:", error);
+    emitControlEvent("processing_error", {
+      source,
+      message: String(error?.message || error || "")
+    });
   }
 }
 

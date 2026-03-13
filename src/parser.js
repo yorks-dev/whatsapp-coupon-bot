@@ -252,9 +252,13 @@ function parseSentence(sentence, options = {}) {
   if (!mess) reasons.push("missing_mess_name");
 
   let meal = detectMeal(tokens);
-  if (!meal && (activeMealMode === "lunch" || activeMealMode === "dinner")) {
-    meal = { meal: activeMealMode, score: 0.55, source: "active_mode_fallback" };
-    reasons.push("meal_fallback_from_active_mode");
+  if (
+    meal &&
+    (activeMealMode === "lunch" || activeMealMode === "dinner") &&
+    meal.meal !== activeMealMode
+  ) {
+    reasons.push("meal_mismatch_active_mode");
+    meal = null;
   }
   if (!meal) reasons.push("missing_meal");
 
